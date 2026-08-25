@@ -1,5 +1,5 @@
 use std::env;
-use wasmtime::{Config, Engine, Instance, Linker, Module, Store, StoreLimitsBuilder};
+use wasmtime::{Config, Engine, Instance, Linker, Module, Caller, Store, StoreLimitsBuilder};
 use std::time::Instant;
 
 const MAX_FUEL: u64 = 10_000;
@@ -86,9 +86,63 @@ fn instantiate_guest(
 ) -> Option<Instance> {
     let mut linker = Linker::new(engine);
 
-    if let Err(error) = linker.func_wrap("host", "print_number", |number: i32| {
-        println!("Guest says: {}", number);
-    }) {
+    if let Err(error) = linker.func_wrap(
+        "host",
+        "print_text",
+        |mut caller: Caller<'_, wasmtime::StoreLimits>, pointer: i32, length: i32| {
+            let memory = match caller.get_export("memory") {
+                Some(wasmtime::Extern::Memory(memory)) => memory,
+
+                _ => {
+                    println!("Guest error: memory export not found.");
+                    return;
+                }
+            };
+
+            let data = memory.data(&caller);
+
+            let start = match usize::try_from(pointer) {
+                Ok(value) => value,
+                Err(_) => {
+                    println!("Guest error: invalid memory pointer.");
+                    return;
+                }
+            };
+
+            let length = match usize::try_from(length) {
+                Ok(value) => value,
+                Err(_) => {
+                    println!("Guest error: invalid text length.");
+                    return;
+                }
+            };
+
+            let end = match start.checked_add(length) {
+                Some(value) => value,
+                None => {
+                    println!("Guest error: invalid memory range.");
+                    return;
+                }
+            };
+
+            if end > data.len() {
+                println!("Guest error: memory access out of bounds.");
+                return;
+            }
+
+            let text_bytes = &data[start..end];
+
+            let text = match std::str::from_utf8(text_bytes) {
+                Ok(text) => text,
+                Err(_) => {
+                    println!("Guest error: text is not valid UTF-8.");
+                    return;
+                }
+            };
+
+            println!("Guest says: {}", text);
+        },
+    ) {
         println!("Failed to create host function.");
         println!("Reason: {}", error);
 
