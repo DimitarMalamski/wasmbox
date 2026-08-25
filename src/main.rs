@@ -1,49 +1,98 @@
 use std::env;
-use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimitsBuilder};
+use wasmtime::{Config, Engine, Instance, Linker, Module, Store, StoreLimitsBuilder};
+
+const MAX_FUEL: u64 = 10_000;
+const MAX_MEMORY_BYTES: usize = 32 * 1024 * 1024; // 32 MB
 
 fn main() -> wasmtime::Result<()> {
-    // Create Wasmtime configuration
-    let mut config = Config::new();
-    let args: Vec<String> = env::args().collect();
+    let engine = create_engine()?;
 
-    if args.len() < 2 {
-        println!("Usage: cargo run -- <path-to-wat-file>");
+    let guest_path = match get_guest_path() {
+        Some(path) => path,
+        None => return Ok(()),
+    };
+
+    println!("Loading guest: {}", guest_path);
+
+    if !std::path::Path::new(&guest_path).exists() {
+        println!("Could not load guest!");
+        println!("Reason: File does not exist.");
+
         return Ok(());
     }
 
-    let guest_path = &args[1];
+    // Load our infinite-loop guest
+    let module = match load_guest(&engine, &guest_path) {
+        Some(module) => module,
+        None => return Ok(()),
+    };
 
-    // Enable fuel consumption
+    let mut store = create_store(&engine)?;
+
+    let instance = match instantiate_guest(&engine, &mut store, &module) {
+        Some(instance) => instance,
+        None => return Ok(()),
+    };
+
+    let run = match get_run_function(&instance, &mut store) {
+        Some(run) => run,
+        None => return Ok(()),
+    };
+
+    println!("Starting guest...");
+
+    execute_guest(&run, &mut store);
+
+    Ok(())
+}
+
+fn load_guest(engine: &Engine, guest_path: &str) -> Option<Module> {
+    match Module::from_file(engine, guest_path) {
+        Ok(module) => Some(module),
+        
+        Err(error) => {
+            println!("Reason: The guest is not valid WebAssembly.");
+            println!("Details: {}", error);
+
+            None
+        }
+    }
+}
+
+fn create_engine() -> wasmtime::Result<Engine> {
+    let mut config = Config::new();
     config.consume_fuel(true);
 
-    // Create the engine using our configuration
-    let engine = Engine::new(&config)?;
+    Engine::new(&config)
+}
 
-    // Load our infinite-loop guest
-    let module = Module::from_file(&engine, guest_path)?;
-
+fn create_store(engine: &Engine) -> wasmtime::Result<Store<wasmtime::StoreLimits>> {
     let limits = StoreLimitsBuilder::new()
-        .memory_size(32 * 1024 * 1024)
+        .memory_size(MAX_MEMORY_BYTES)
         .build();
 
-    // Create the guest environment
-    let mut store = Store::new(&engine, limits);
-    
+    let mut store = Store::new(engine, limits);
+
     store.limiter(|limits| limits);
+    store.set_fuel(MAX_FUEL)?;
 
-    // Give the guest 10,000 fuel
-    store.set_fuel(10_000)?;
+    Ok(store)
+}
 
-    // Start the WebAssembly module
-    let linker = Linker::new(&engine);
+fn instantiate_guest(
+    engine: &Engine,
+    store: &mut Store<wasmtime::StoreLimits>,
+    module: &Module,
+) -> Option<Instance> {
+    let linker = Linker::new(engine);
 
-    let instance = match linker.instantiate(&mut store, &module) {
-        Ok(instance) => instance,
+    match linker.instantiate(&mut *store, module) {
+        Ok(instance) => Some(instance),
 
         Err(error) => {
-            println!("Guest rejected!");
-
             let error_message = error.to_string();
+
+            println!("Guest rejected!");
 
             if error_message.contains("memory") {
                 println!("Reason: Guest exceeded the 32 MB memory limit.");
@@ -51,20 +100,32 @@ fn main() -> wasmtime::Result<()> {
                 println!("Reason: {}", error_message);
             }
 
-            return Ok(());
+            None
         }
-    };
+    }
+}
 
-    // Find the "run" function
-    let run = instance.get_typed_func::<(), ()>(
-        &mut store,
-        "run",
-    )?;
+fn get_run_function(
+    instance: &Instance,
+    store: &mut Store<wasmtime::StoreLimits>,
+) -> Option<wasmtime::TypedFunc<(), ()>> {
+    match instance.get_typed_func::<(), ()>(&mut *store, "run") {
+        Ok(run) => Some(run),
 
-    println!("Starting guest...");
+        Err(_) => {
+            println!("Guest rejected!");
+            println!("Reason: Guest must export a function called run().");
 
-    // Try running it
-    match run.call(&mut store, ()) {
+            None
+        }
+    }
+}
+
+fn execute_guest(
+    run: &wasmtime::TypedFunc<(), ()>,
+    store: &mut Store<wasmtime::StoreLimits>,
+) {
+    match run.call(&mut *store, ()) {
         Ok(_) => {
             println!("Guest finished successfully.");
         }
@@ -81,6 +142,15 @@ fn main() -> wasmtime::Result<()> {
             }
         }
     }
+}
 
-    Ok(())
+fn get_guest_path() -> Option<String> {
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() < 2 {
+        println!("Usage: cargo run -- <path-to-wat-file>");
+        return None;
+    }
+
+    Some(args[1].clone())
 }
