@@ -2,6 +2,7 @@ use std::env;
 use wasmtime::{Config, Engine, Instance, Linker, Module, Caller, Store, StoreLimitsBuilder};
 use std::time::{Duration, Instant};
 use std::thread;
+use std::sync::mpsc;
 
 const MAX_FUEL: u64 = 10_000;
 const MAX_MEMORY_BYTES: usize = 32 * 1024 * 1024; // 32 MB
@@ -90,61 +91,8 @@ fn instantiate_guest(
 ) -> Option<Instance> {
     let mut linker = Linker::new(engine);
 
-    if let Err(error) = linker.func_wrap(
-        "host",
-        "print_text",
-        |mut caller: Caller<'_, wasmtime::StoreLimits>, pointer: i32, length: i32|
-                -> wasmtime::Result<()> {
-            let memory = match caller.get_export("memory") {
-                Some(wasmtime::Extern::Memory(memory)) => memory,
-
-                _ => {
-                    println!("Guest error: memory export not found.");
-                    return Ok(());
-                }
-            };
-
-            let data = memory.data(&caller);
-
-            let start = match usize::try_from(pointer) {
-                Ok(value) => value,
-                Err(_) => {
-                    return Err(wasmtime::Error::msg("invalid memory pointer"));
-                }
-            };
-
-            let length = match usize::try_from(length) {
-                Ok(value) => value,
-                Err(_) => {
-                    return Err(wasmtime::Error::msg("invalid text length"));
-                }
-            };
-
-            let end = match start.checked_add(length) {
-                Some(value) => value,
-                None => {
-                    return Err(wasmtime::Error::msg("invalid memory range"));
-                }
-            };
-
-            if end > data.len() {
-                return Err(wasmtime::Error::msg("memory access out of bounds"));
-            }
-
-            let text_bytes = &data[start..end];
-
-            let text = match std::str::from_utf8(text_bytes) {
-                Ok(text) => text,
-                Err(_) => {
-                    return Err(wasmtime::Error::msg("invalid UTF-8"));
-                }
-            };
-
-            println!("Guest says: {}", text);
-            Ok(())
-        },
-    ) {
-        println!("Failed to create host function.");
+    if let Err(error) = register_host_functions(&mut linker) {
+        println!("Failed to create host functions.");
         println!("Reason: {}", error);
 
         return None;
@@ -190,19 +138,32 @@ fn execute_guest(
     run: &wasmtime::TypedFunc<(), ()>,
     store: &mut Store<wasmtime::StoreLimits>,
 ) {
+    let (cancel_sender, cancel_receiver) = mpsc::channel::<()>();
+
     let timeout_engine = engine.clone();
 
-    thread::spawn(move || {
-        thread::sleep(Duration::from_secs(MAX_EXECUTION_TIME_SECONDS));
-        timeout_engine.increment_epoch();
+    let timeout_handle = thread::spawn(move || {
+        if cancel_receiver
+            .recv_timeout(Duration::from_secs(MAX_EXECUTION_TIME_SECONDS))
+            .is_err()
+        {
+            timeout_engine.increment_epoch();
+        }
     });
 
     let start = Instant::now();
 
     let execution_result = run.call(&mut *store, ());
+    let remaining_fuel = store.get_fuel().unwrap_or(0);
+    let fuel_used = MAX_FUEL.saturating_sub(remaining_fuel);
+
+    let _ = cancel_sender.send(());
+    let _ = timeout_handle.join();
+
     let duration = start.elapsed();
 
     println!("Execution time: {:.2} ms", duration.as_secs_f64() * 1000.0);
+    println!("Fuel used: {} / {}", fuel_used, MAX_FUEL);
 
     match execution_result {
         Ok(_) => {
@@ -244,4 +205,85 @@ fn get_guest_path() -> Option<String> {
     }
 
     Some(args[1].clone())
+}
+
+fn register_print_number(
+    linker: &mut Linker<wasmtime::StoreLimits>,
+) -> wasmtime::Result<()> {
+    linker.func_wrap("host", "print_number", |number: i32| {
+        println!("Guest says: {}", number);
+    })?;
+
+    Ok(())
+}
+
+fn register_print_text(
+    linker: &mut Linker<wasmtime::StoreLimits>,
+) -> wasmtime::Result<()> {
+    linker.func_wrap("host", "print_text", host_print_text)?;
+
+    Ok(())
+}
+
+fn host_print_text(
+    mut caller: Caller<'_, wasmtime::StoreLimits>,
+    pointer: i32,
+    length: i32,
+) -> wasmtime::Result<()> {
+    let memory = match caller.get_export("memory") {
+        Some(wasmtime::Extern::Memory(memory)) => memory,
+
+        _ => {
+            return Err(wasmtime::Error::msg("memory export not found"));
+        }
+    };
+
+    let data = memory.data(&caller);
+
+    let start = match usize::try_from(pointer) {
+        Ok(value) => value,
+        Err(_) => {
+            return Err(wasmtime::Error::msg("invalid memory pointer"));
+        }
+    };
+
+    let length = match usize::try_from(length) {
+        Ok(value) => value,
+        Err(_) => {
+            return Err(wasmtime::Error::msg("invalid text length"));
+        }
+    };
+
+    let end = match start.checked_add(length) {
+        Some(value) => value,
+        None => {
+            return Err(wasmtime::Error::msg("invalid memory range"));
+        }
+    };
+
+    if end > data.len() {
+        return Err(wasmtime::Error::msg("memory access out of bounds"));
+    }
+
+    let text_bytes = &data[start..end];
+
+    let text = match std::str::from_utf8(text_bytes) {
+        Ok(text) => text,
+        Err(_) => {
+            return Err(wasmtime::Error::msg("invalid UTF-8"));
+        }
+    };
+
+    println!("Guest says: {}", text);
+
+    Ok(())
+}
+
+fn register_host_functions(
+    linker: &mut Linker<wasmtime::StoreLimits>,
+) -> wasmtime::Result<()> {
+    register_print_number(linker)?;
+    register_print_text(linker)?;
+
+    Ok(())
 }
