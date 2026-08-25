@@ -1,4 +1,4 @@
-use wasmtime::{Config, Engine, Linker, Module, Store};
+use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimitsBuilder};
 
 fn main() -> wasmtime::Result<()> {
     // Create Wasmtime configuration
@@ -11,10 +11,16 @@ fn main() -> wasmtime::Result<()> {
     let engine = Engine::new(&config)?;
 
     // Load our infinite-loop guest
-    let module = Module::from_file(&engine, "examples/infinite.wat")?;
+    let module = Module::from_file(&engine, "examples/memory_hog.wat")?;
+
+    let limits = StoreLimitsBuilder::new()
+        .memory_size(32 * 1024 * 1024)
+        .build();
 
     // Create the guest environment
-    let mut store = Store::new(&engine, ());
+    let mut store = Store::new(&engine, limits);
+    
+    store.limiter(|limits| limits);
 
     // Give the guest 10,000 fuel
     store.set_fuel(10_000)?;
