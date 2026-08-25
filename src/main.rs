@@ -1,8 +1,17 @@
+use std::env;
 use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimitsBuilder};
 
 fn main() -> wasmtime::Result<()> {
     // Create Wasmtime configuration
     let mut config = Config::new();
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() < 2 {
+        println!("Usage: cargo run -- <path-to-wat-file>");
+        return Ok(());
+    }
+
+    let guest_path = &args[1];
 
     // Enable fuel consumption
     config.consume_fuel(true);
@@ -11,7 +20,7 @@ fn main() -> wasmtime::Result<()> {
     let engine = Engine::new(&config)?;
 
     // Load our infinite-loop guest
-    let module = Module::from_file(&engine, "examples/infinite.wat")?;
+    let module = Module::from_file(&engine, guest_path)?;
 
     let limits = StoreLimitsBuilder::new()
         .memory_size(32 * 1024 * 1024)
