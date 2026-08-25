@@ -11,7 +11,7 @@ fn main() -> wasmtime::Result<()> {
     let engine = Engine::new(&config)?;
 
     // Load our infinite-loop guest
-    let module = Module::from_file(&engine, "examples/memory_hog.wat")?;
+    let module = Module::from_file(&engine, "examples/infinite.wat")?;
 
     let limits = StoreLimitsBuilder::new()
         .memory_size(32 * 1024 * 1024)
@@ -62,7 +62,14 @@ fn main() -> wasmtime::Result<()> {
 
         Err(error) => {
             println!("Guest was stopped!");
-            println!("Reason: {}", error);
+
+            let error_message = format!("{:#}", error);
+
+            if error_message.contains("fuel") {
+                println!("Reason: Execution limit exceeded.");
+            } else {
+                println!("Reason: {}", error_message);
+            }
         }
     }
 
