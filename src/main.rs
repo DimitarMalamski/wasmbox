@@ -84,7 +84,16 @@ fn instantiate_guest(
     store: &mut Store<wasmtime::StoreLimits>,
     module: &Module,
 ) -> Option<Instance> {
-    let linker = Linker::new(engine);
+    let mut linker = Linker::new(engine);
+
+    if let Err(error) = linker.func_wrap("host", "print_number", |number: i32| {
+        println!("Guest says: {}", number);
+    }) {
+        println!("Failed to create host function.");
+        println!("Reason: {}", error);
+
+        return None;
+    }
 
     match linker.instantiate(&mut *store, module) {
         Ok(instance) => Some(instance),
@@ -129,7 +138,7 @@ fn execute_guest(
 
     let execution_result = run.call(&mut *store, ());
     let duration = start.elapsed();
-    
+
     println!("Execution time: {:.2} ms", duration.as_secs_f64() * 1000.0);
 
     match execution_result {
