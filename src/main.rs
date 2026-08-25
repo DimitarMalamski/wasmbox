@@ -37,7 +37,7 @@ fn main() -> wasmtime::Result<()> {
 
     println!("Starting guest...");
 
-    execute_guest(&engine, &run, &mut store);
+    execute_guest(&engine, &instance, &run, &mut store);
 
     Ok(())
 }
@@ -135,6 +135,7 @@ fn get_run_function(
 
 fn execute_guest(
     engine: &Engine,
+    instance: &Instance,
     run: &wasmtime::TypedFunc<(), ()>,
     store: &mut Store<wasmtime::StoreLimits>,
 ) {
@@ -153,9 +154,18 @@ fn execute_guest(
 
     let start = Instant::now();
 
+    let fuel_before = store.get_fuel().unwrap_or(0);
+
     let execution_result = run.call(&mut *store, ());
+
+    let guest_memory = instance.get_memory(&mut *store, "memory");
+    let memory_used_bytes = match guest_memory {
+        Some(memory) => memory.data_size(&*store),
+        None => 0,
+    };
+
     let remaining_fuel = store.get_fuel().unwrap_or(0);
-    let fuel_used = MAX_FUEL.saturating_sub(remaining_fuel);
+    let fuel_used = fuel_before.saturating_sub(remaining_fuel);
 
     let _ = cancel_sender.send(());
     let _ = timeout_handle.join();
@@ -164,6 +174,12 @@ fn execute_guest(
 
     println!("Execution time: {:.2} ms", duration.as_secs_f64() * 1000.0);
     println!("Fuel used: {} / {}", fuel_used, MAX_FUEL);
+
+    println!(
+        "Memory allocated: {:.2} KB / {:.2} MB",
+        memory_used_bytes as f64 / 1024.0,
+        MAX_MEMORY_BYTES as f64 / (1024.0 * 1024.0)
+    );
 
     match execution_result {
         Ok(_) => {
