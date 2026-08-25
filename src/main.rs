@@ -27,7 +27,24 @@ fn main() -> wasmtime::Result<()> {
 
     // Start the WebAssembly module
     let linker = Linker::new(&engine);
-    let instance = linker.instantiate(&mut store, &module)?;
+
+    let instance = match linker.instantiate(&mut store, &module) {
+        Ok(instance) => instance,
+
+        Err(error) => {
+            println!("Guest rejected!");
+
+            let error_message = error.to_string();
+
+            if error_message.contains("memory") {
+                println!("Reason: Guest exceeded the 32 MB memory limit.");
+            } else {
+                println!("Reason: {}", error_message);
+            }
+
+            return Ok(());
+        }
+    };
 
     // Find the "run" function
     let run = instance.get_typed_func::<(), ()>(
