@@ -15,7 +15,6 @@ fn main() -> wasmtime::Result<()> {
 
     println!("Loading guest: {}", guest_path);
 
-    // Load our infinite-loop guest
     let module = match load_guest(&engine, &guest_path) {
         Some(module) => module,
         None => return Ok(()),
@@ -89,13 +88,14 @@ fn instantiate_guest(
     if let Err(error) = linker.func_wrap(
         "host",
         "print_text",
-        |mut caller: Caller<'_, wasmtime::StoreLimits>, pointer: i32, length: i32| {
+        |mut caller: Caller<'_, wasmtime::StoreLimits>, pointer: i32, length: i32|
+                -> wasmtime::Result<()> {
             let memory = match caller.get_export("memory") {
                 Some(wasmtime::Extern::Memory(memory)) => memory,
 
                 _ => {
                     println!("Guest error: memory export not found.");
-                    return;
+                    return Ok(());
                 }
             };
 
@@ -104,30 +104,26 @@ fn instantiate_guest(
             let start = match usize::try_from(pointer) {
                 Ok(value) => value,
                 Err(_) => {
-                    println!("Guest error: invalid memory pointer.");
-                    return;
+                    return Err(wasmtime::Error::msg("invalid memory pointer"));
                 }
             };
 
             let length = match usize::try_from(length) {
                 Ok(value) => value,
                 Err(_) => {
-                    println!("Guest error: invalid text length.");
-                    return;
+                    return Err(wasmtime::Error::msg("invalid text length"));
                 }
             };
 
             let end = match start.checked_add(length) {
                 Some(value) => value,
                 None => {
-                    println!("Guest error: invalid memory range.");
-                    return;
+                    return Err(wasmtime::Error::msg("invalid memory range"));
                 }
             };
 
             if end > data.len() {
-                println!("Guest error: memory access out of bounds.");
-                return;
+                return Err(wasmtime::Error::msg("memory access out of bounds"));
             }
 
             let text_bytes = &data[start..end];
@@ -135,12 +131,12 @@ fn instantiate_guest(
             let text = match std::str::from_utf8(text_bytes) {
                 Ok(text) => text,
                 Err(_) => {
-                    println!("Guest error: text is not valid UTF-8.");
-                    return;
+                    return Err(wasmtime::Error::msg("invalid UTF-8"));
                 }
             };
 
             println!("Guest says: {}", text);
+            Ok(())
         },
     ) {
         println!("Failed to create host function.");
@@ -207,6 +203,16 @@ fn execute_guest(
 
             if error_message.contains("fuel") {
                 println!("Reason: Execution limit exceeded.");
+            } else if error_message.contains("memory access out of bounds") {
+                println!("Reason: Guest attempted invalid memory access.");
+            } else if error_message.contains("invalid memory pointer") {
+                println!("Reason: Guest provided an invalid memory pointer.");
+            } else if error_message.contains("invalid text length") {
+                println!("Reason: Guest provided an invalid text length.");
+            } else if error_message.contains("invalid memory range") {
+                println!("Reason: Guest provided an invalid memory range.");
+            } else if error_message.contains("invalid UTF-8") {
+                println!("Reason: Guest provided invalid UTF-8 text.");
             } else {
                 println!("Reason: {}", error_message);
             }
