@@ -1,29 +1,47 @@
-use wasmtime::{Engine, Linker, Module, Store};
+use wasmtime::{Config, Engine, Linker, Module, Store};
 
 fn main() -> wasmtime::Result<()> {
-    // Create the WebAssembly runtime
-    let engine = Engine::default();
+    // Create Wasmtime configuration
+    let mut config = Config::new();
 
-    // Load WebAssembly code from an external file
-    let module = Module::from_file(&engine, "examples/add.wat")?;
+    // Enable fuel consumption
+    config.consume_fuel(true);
 
-    // Create the environment where the guest will run
+    // Create the engine using our configuration
+    let engine = Engine::new(&config)?;
+
+    // Load our infinite-loop guest
+    let module = Module::from_file(&engine, "examples/infinite.wat")?;
+
+    // Create the guest environment
     let mut store = Store::new(&engine, ());
 
-    // Prepare the module for execution
+    // Give the guest 10,000 fuel
+    store.set_fuel(10_000)?;
+
+    // Start the WebAssembly module
     let linker = Linker::new(&engine);
     let instance = linker.instantiate(&mut store, &module)?;
 
-    // Find the exported "add" function
-    let add = instance.get_typed_func::<(i32, i32), i32>(
+    // Find the "run" function
+    let run = instance.get_typed_func::<(), ()>(
         &mut store,
-        "add",
+        "run",
     )?;
 
-    // Execute the guest function
-    let result = add.call(&mut store, (10, 20))?;
+    println!("Starting guest...");
 
-    println!("Guest returned: {}", result);
+    // Try running it
+    match run.call(&mut store, ()) {
+        Ok(_) => {
+            println!("Guest finished successfully.");
+        }
+
+        Err(error) => {
+            println!("Guest was stopped!");
+            println!("Reason: {}", error);
+        }
+    }
 
     Ok(())
 }
