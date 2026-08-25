@@ -1,5 +1,6 @@
 use std::env;
 use wasmtime::{Config, Engine, Instance, Linker, Module, Store, StoreLimitsBuilder};
+use std::time::Instant;
 
 const MAX_FUEL: u64 = 10_000;
 const MAX_MEMORY_BYTES: usize = 32 * 1024 * 1024; // 32 MB
@@ -13,13 +14,6 @@ fn main() -> wasmtime::Result<()> {
     };
 
     println!("Loading guest: {}", guest_path);
-
-    if !std::path::Path::new(&guest_path).exists() {
-        println!("Could not load guest!");
-        println!("Reason: File does not exist.");
-
-        return Ok(());
-    }
 
     // Load our infinite-loop guest
     let module = match load_guest(&engine, &guest_path) {
@@ -47,6 +41,12 @@ fn main() -> wasmtime::Result<()> {
 }
 
 fn load_guest(engine: &Engine, guest_path: &str) -> Option<Module> {
+
+    if !std::path::Path::new(guest_path).exists() {
+        println!("Reason: File does not exist.");
+        return None;
+    }
+
     match Module::from_file(engine, guest_path) {
         Ok(module) => Some(module),
         
@@ -125,7 +125,14 @@ fn execute_guest(
     run: &wasmtime::TypedFunc<(), ()>,
     store: &mut Store<wasmtime::StoreLimits>,
 ) {
-    match run.call(&mut *store, ()) {
+    let start = Instant::now();
+
+    let execution_result = run.call(&mut *store, ());
+    let duration = start.elapsed();
+    
+    println!("Execution time: {:.2} ms", duration.as_secs_f64() * 1000.0);
+
+    match execution_result {
         Ok(_) => {
             println!("Guest finished successfully.");
         }
