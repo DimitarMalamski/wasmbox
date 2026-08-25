@@ -1,9 +1,11 @@
 use std::env;
 use wasmtime::{Config, Engine, Instance, Linker, Module, Caller, Store, StoreLimitsBuilder};
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use std::thread;
 
 const MAX_FUEL: u64 = 10_000;
 const MAX_MEMORY_BYTES: usize = 32 * 1024 * 1024; // 32 MB
+const MAX_EXECUTION_TIME_SECONDS: u64 = 2;
 
 fn main() -> wasmtime::Result<()> {
     let engine = create_engine()?;
@@ -34,7 +36,7 @@ fn main() -> wasmtime::Result<()> {
 
     println!("Starting guest...");
 
-    execute_guest(&run, &mut store);
+    execute_guest(&engine, &run, &mut store);
 
     Ok(())
 }
@@ -60,7 +62,9 @@ fn load_guest(engine: &Engine, guest_path: &str) -> Option<Module> {
 
 fn create_engine() -> wasmtime::Result<Engine> {
     let mut config = Config::new();
+
     config.consume_fuel(true);
+    config.epoch_interruption(true);
 
     Engine::new(&config)
 }
@@ -74,6 +78,7 @@ fn create_store(engine: &Engine) -> wasmtime::Result<Store<wasmtime::StoreLimits
 
     store.limiter(|limits| limits);
     store.set_fuel(MAX_FUEL)?;
+    store.set_epoch_deadline(1);
 
     Ok(store)
 }
@@ -181,9 +186,17 @@ fn get_run_function(
 }
 
 fn execute_guest(
+    engine: &Engine,
     run: &wasmtime::TypedFunc<(), ()>,
     store: &mut Store<wasmtime::StoreLimits>,
 ) {
+    let timeout_engine = engine.clone();
+
+    thread::spawn(move || {
+        thread::sleep(Duration::from_secs(MAX_EXECUTION_TIME_SECONDS));
+        timeout_engine.increment_epoch();
+    });
+
     let start = Instant::now();
 
     let execution_result = run.call(&mut *store, ());
@@ -203,6 +216,8 @@ fn execute_guest(
 
             if error_message.contains("fuel") {
                 println!("Reason: Execution limit exceeded.");
+            } else if error_message.contains("wasm trap: interrupt") {
+                println!("Reason: Maximum execution time exceeded.");
             } else if error_message.contains("memory access out of bounds") {
                 println!("Reason: Guest attempted invalid memory access.");
             } else if error_message.contains("invalid memory pointer") {
