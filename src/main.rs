@@ -1,13 +1,22 @@
+use wasmbox::sandbox::{
+    create_engine,
+    create_store,
+    get_run_function,
+    instantiate_guest,
+    MAX_EXECUTION_TIME_SECONDS,
+    MAX_FUEL,
+    MAX_MEMORY_BYTES,
+};
+
 use std::env;
-use wasmtime::{Config, Engine, Instance, Linker, Module, Caller, Store, StoreLimitsBuilder};
+
+use wasmtime::{
+    Engine, Instance, Module, Store,
+};
+
 use std::time::{Duration, Instant};
 use std::thread;
 use std::sync::mpsc;
-
-const MAX_FUEL: u64 = 10_000;
-const MAX_MEMORY_BYTES: usize = 32 * 1024 * 1024; // 32 MB
-const MAX_EXECUTION_TIME_SECONDS: u64 = 2;
-
 fn main() -> wasmtime::Result<()> {
     let engine = create_engine()?;
 
@@ -26,13 +35,32 @@ fn main() -> wasmtime::Result<()> {
     let mut store = create_store(&engine)?;
 
     let instance = match instantiate_guest(&engine, &mut store, &module) {
-        Some(instance) => instance,
-        None => return Ok(()),
+        Ok(instance) => instance,
+
+        Err(error) => {
+            let error_message = format!("{:#}", error);
+
+            println!("Guest rejected!");
+
+            if error_message.contains("memory") {
+                println!("Reason: Guest exceeded the 32 MB memory limit.");
+            } else {
+                println!("Reason: {}", error_message);
+            }
+
+            return Ok(());
+        }
     };
 
     let run = match get_run_function(&instance, &mut store) {
-        Some(run) => run,
-        None => return Ok(()),
+        Ok(run) => run,
+
+        Err(error) => {
+            println!("Guest rejected!");
+            println!("Reason: {}", error);
+
+            return Ok(());
+        }
     };
 
     println!("Starting guest...");
@@ -55,78 +83,6 @@ fn load_guest(engine: &Engine, guest_path: &str) -> Option<Module> {
         Err(error) => {
             println!("Reason: The guest is not valid WebAssembly.");
             println!("Details: {}", error);
-
-            None
-        }
-    }
-}
-
-fn create_engine() -> wasmtime::Result<Engine> {
-    let mut config = Config::new();
-
-    config.consume_fuel(true);
-    config.epoch_interruption(true);
-
-    Engine::new(&config)
-}
-
-fn create_store(engine: &Engine) -> wasmtime::Result<Store<wasmtime::StoreLimits>> {
-    let limits = StoreLimitsBuilder::new()
-        .memory_size(MAX_MEMORY_BYTES)
-        .build();
-
-    let mut store = Store::new(engine, limits);
-
-    store.limiter(|limits| limits);
-    store.set_fuel(MAX_FUEL)?;
-    store.set_epoch_deadline(1);
-
-    Ok(store)
-}
-
-fn instantiate_guest(
-    engine: &Engine,
-    store: &mut Store<wasmtime::StoreLimits>,
-    module: &Module,
-) -> Option<Instance> {
-    let mut linker = Linker::new(engine);
-
-    if let Err(error) = register_host_functions(&mut linker) {
-        println!("Failed to create host functions.");
-        println!("Reason: {}", error);
-
-        return None;
-    }
-
-    match linker.instantiate(&mut *store, module) {
-        Ok(instance) => Some(instance),
-
-        Err(error) => {
-            let error_message = error.to_string();
-
-            println!("Guest rejected!");
-
-            if error_message.contains("memory") {
-                println!("Reason: Guest exceeded the 32 MB memory limit.");
-            } else {
-                println!("Reason: {}", error_message);
-            }
-
-            None
-        }
-    }
-}
-
-fn get_run_function(
-    instance: &Instance,
-    store: &mut Store<wasmtime::StoreLimits>,
-) -> Option<wasmtime::TypedFunc<(), ()>> {
-    match instance.get_typed_func::<(), ()>(&mut *store, "run") {
-        Ok(run) => Some(run),
-
-        Err(_) => {
-            println!("Guest rejected!");
-            println!("Reason: Guest must export a function called run().");
 
             None
         }
@@ -221,85 +177,4 @@ fn get_guest_path() -> Option<String> {
     }
 
     Some(args[1].clone())
-}
-
-fn register_print_number(
-    linker: &mut Linker<wasmtime::StoreLimits>,
-) -> wasmtime::Result<()> {
-    linker.func_wrap("host", "print_number", |number: i32| {
-        println!("Guest says: {}", number);
-    })?;
-
-    Ok(())
-}
-
-fn register_print_text(
-    linker: &mut Linker<wasmtime::StoreLimits>,
-) -> wasmtime::Result<()> {
-    linker.func_wrap("host", "print_text", host_print_text)?;
-
-    Ok(())
-}
-
-fn host_print_text(
-    mut caller: Caller<'_, wasmtime::StoreLimits>,
-    pointer: i32,
-    length: i32,
-) -> wasmtime::Result<()> {
-    let memory = match caller.get_export("memory") {
-        Some(wasmtime::Extern::Memory(memory)) => memory,
-
-        _ => {
-            return Err(wasmtime::Error::msg("memory export not found"));
-        }
-    };
-
-    let data = memory.data(&caller);
-
-    let start = match usize::try_from(pointer) {
-        Ok(value) => value,
-        Err(_) => {
-            return Err(wasmtime::Error::msg("invalid memory pointer"));
-        }
-    };
-
-    let length = match usize::try_from(length) {
-        Ok(value) => value,
-        Err(_) => {
-            return Err(wasmtime::Error::msg("invalid text length"));
-        }
-    };
-
-    let end = match start.checked_add(length) {
-        Some(value) => value,
-        None => {
-            return Err(wasmtime::Error::msg("invalid memory range"));
-        }
-    };
-
-    if end > data.len() {
-        return Err(wasmtime::Error::msg("memory access out of bounds"));
-    }
-
-    let text_bytes = &data[start..end];
-
-    let text = match std::str::from_utf8(text_bytes) {
-        Ok(text) => text,
-        Err(_) => {
-            return Err(wasmtime::Error::msg("invalid UTF-8"));
-        }
-    };
-
-    println!("Guest says: {}", text);
-
-    Ok(())
-}
-
-fn register_host_functions(
-    linker: &mut Linker<wasmtime::StoreLimits>,
-) -> wasmtime::Result<()> {
-    register_print_number(linker)?;
-    register_print_text(linker)?;
-
-    Ok(())
 }
