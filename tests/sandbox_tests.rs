@@ -1,4 +1,8 @@
-use wasmbox::sandbox::execute_wat;
+use wasmbox::sandbox::{
+    execute_wat,
+    ExecutionError,
+    SandboxError,
+};
 
 #[test]
 fn safe_guest_executes_successfully() {
@@ -36,4 +40,75 @@ fn infinite_guest_is_stopped_by_fuel_limit() {
     assert!(!result.success);
     assert_eq!(result.message, "Execution limit exceeded.");
     assert_eq!(result.fuel_used, 10_000);
+}
+
+#[test]
+fn guest_without_run_function_is_rejected() {
+    let code = r#"
+        (module
+            (func (export "hello"))
+        )
+    "#;
+
+    let result = execute_wat(code);
+
+    assert!(matches!(
+        result,
+        Err(SandboxError::InvalidContract(_))
+    ));
+}
+
+#[test]
+fn guest_output_is_captured() {
+    let code = r#"
+        (module
+            (import "host" "print_number"
+                (func $print_number (param i32))
+            )
+
+            (func (export "run")
+                i32.const 42
+                call $print_number
+            )
+        )
+    "#;
+
+    let result = execute_wat(code)
+        .expect("Sandbox setup should succeed");
+
+    assert!(result.success);
+
+    assert_eq!(
+        result.output,
+        vec!["42".to_string()]
+    );
+}
+
+#[test]
+fn invalid_memory_access_is_rejected() {
+    let code = r#"
+        (module
+            (import "host" "print_text"
+                (func $print_text (param i32 i32))
+            )
+
+            (memory (export "memory") 1)
+
+            (func (export "run")
+                i32.const 1000000
+                i32.const 50
+                call $print_text
+            )
+        )
+    "#;
+
+    let result = execute_wat(code)
+        .expect("Sandbox setup should succeed");
+
+    assert!(!result.success);
+
+    assert!(matches!(
+        result.error,
+        Some(ExecutionError::InvalidMemoryAccess)
+    ));
 }
