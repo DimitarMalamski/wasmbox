@@ -1,18 +1,14 @@
 use std::env;
 
 use wasmbox::sandbox::{
-    execute_wat_with_config,
-    validate_sandbox_config,
-    ExecutionError,
-    SandboxConfig,
-    SandboxError,
+    ExecutionError, SandboxConfig, SandboxError, execute_wat_with_config, validate_sandbox_config,
 };
 
 use axum::{
+    Json, Router,
     extract::{DefaultBodyLimit, State},
     http::StatusCode,
     routing::{get, post},
-    Json, Router,
 };
 
 use std::sync::Arc;
@@ -47,38 +43,24 @@ async fn main() {
 
     println!("WasmBox API running at http://127.0.0.1:3000");
 
-    axum::serve(listener, app)
-        .await
-        .unwrap();
+    axum::serve(listener, app).await.unwrap();
 }
 
-fn parse_config_value<T>(
-    name: &str,
-    value: &str,
-) -> Result<T, String>
+fn parse_config_value<T>(name: &str, value: &str) -> Result<T, String>
 where
     T: std::str::FromStr,
 {
-    value.parse::<T>().map_err(|_| {
-        format!(
-            "Invalid value for environment variable {}: {}",
-            name, value
-        )
-    })
+    value
+        .parse::<T>()
+        .map_err(|_| format!("Invalid value for environment variable {}: {}", name, value))
 }
 
-fn parse_env_value<T>(
-    name: &str,
-    default: T,
-) -> Result<T, String>
+fn parse_env_value<T>(name: &str, default: T) -> Result<T, String>
 where
     T: std::str::FromStr,
 {
     match env::var(name) {
-        Ok(value) => parse_config_value(
-            name,
-            &value,
-        ),
+        Ok(value) => parse_config_value(name, &value),
 
         Err(env::VarError::NotPresent) => Ok(default),
 
@@ -95,25 +77,16 @@ fn load_sandbox_config() -> Result<SandboxConfig, String> {
     let default = SandboxConfig::default();
 
     let config = SandboxConfig {
-        max_fuel: parse_env_value(
-            "WASMBOX_MAX_FUEL",
-            default.max_fuel,
-        )?,
+        max_fuel: parse_env_value("WASMBOX_MAX_FUEL", default.max_fuel)?,
 
-        max_memory_bytes: parse_env_value(
-            "WASMBOX_MAX_MEMORY_BYTES",
-            default.max_memory_bytes,
-        )?,
+        max_memory_bytes: parse_env_value("WASMBOX_MAX_MEMORY_BYTES", default.max_memory_bytes)?,
 
         max_execution_time_seconds: parse_env_value(
             "WASMBOX_MAX_EXECUTION_TIME_SECONDS",
             default.max_execution_time_seconds,
         )?,
 
-        max_output_bytes: parse_env_value(
-            "WASMBOX_MAX_OUTPUT_BYTES",
-            default.max_output_bytes,
-        )?,
+        max_output_bytes: parse_env_value("WASMBOX_MAX_OUTPUT_BYTES", default.max_output_bytes)?,
     };
 
     validate_sandbox_config(config)
@@ -121,19 +94,15 @@ fn load_sandbox_config() -> Result<SandboxConfig, String> {
 
 fn create_app() -> Result<Router, String> {
     let state = AppState {
-        execution_semaphore: Arc::new(
-            Semaphore::new(MAX_CONCURRENT_EXECUTIONS)
-        ),
+        execution_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_EXECUTIONS)),
         sandbox_config: load_sandbox_config()?,
     };
 
-    Ok(
-        Router::new()
-            .route("/health", get(health))
-            .route("/execute", post(execute))
-            .layer(DefaultBodyLimit::max(MAX_REQUEST_BYTES))
-            .with_state(state)
-    )
+    Ok(Router::new()
+        .route("/health", get(health))
+        .route("/execute", post(execute))
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BYTES))
+        .with_state(state))
 }
 
 async fn health() -> &'static str {
@@ -163,11 +132,7 @@ async fn execute(
     State(state): State<AppState>,
     Json(request): Json<ExecuteRequest>,
 ) -> (StatusCode, Json<ExecuteResponse>) {
-    let permit = match state
-        .execution_semaphore
-        .clone()
-        .try_acquire_owned()
-    {
+    let permit = match state.execution_semaphore.clone().try_acquire_owned() {
         Ok(permit) => permit,
 
         Err(_) => {
@@ -175,8 +140,7 @@ async fn execute(
                 StatusCode::TOO_MANY_REQUESTS,
                 Json(ExecuteResponse {
                     success: false,
-                    message: "Server is busy. Too many concurrent executions."
-                        .to_string(),
+                    message: "Server is busy. Too many concurrent executions.".to_string(),
                     output: Vec::new(),
                     execution_time_ms: None,
                     fuel_used: None,
@@ -192,10 +156,7 @@ async fn execute(
     let execution = tokio::task::spawn_blocking(move || {
         let _permit = permit;
 
-        execute_wat_with_config(
-            &code,
-            sandbox_config,
-        )
+        execute_wat_with_config(&code, sandbox_config)
     })
     .await;
 
@@ -204,9 +165,7 @@ async fn execute(
             let status = match &result.error {
                 None => StatusCode::OK,
 
-                Some(ExecutionError::Timeout) => {
-                    StatusCode::REQUEST_TIMEOUT
-                }
+                Some(ExecutionError::Timeout) => StatusCode::REQUEST_TIMEOUT,
 
                 Some(
                     ExecutionError::FuelExhausted
@@ -217,9 +176,7 @@ async fn execute(
                     | ExecutionError::InvalidUtf8
                     | ExecutionError::OutputLimitExceeded
                     | ExecutionError::Other(_),
-                ) => {
-                    StatusCode::UNPROCESSABLE_ENTITY
-                }
+                ) => StatusCode::UNPROCESSABLE_ENTITY,
             };
 
             (
@@ -228,9 +185,7 @@ async fn execute(
                     success: result.success,
                     message: result.message,
                     output: result.output,
-                    execution_time_ms: Some(
-                        round_to_two_decimals(result.execution_time_ms)
-                    ),
+                    execution_time_ms: Some(round_to_two_decimals(result.execution_time_ms)),
                     fuel_used: Some(result.fuel_used),
                     memory_used_bytes: Some(result.memory_used_bytes),
                 }),
@@ -239,16 +194,13 @@ async fn execute(
 
         Ok(Err(error)) => {
             let status = match &error {
-                SandboxError::EngineCreation(_)
-                | SandboxError::StoreCreation(_) => {
+                SandboxError::EngineCreation(_) | SandboxError::StoreCreation(_) => {
                     StatusCode::INTERNAL_SERVER_ERROR
                 }
 
                 SandboxError::InvalidModule(_)
                 | SandboxError::Instantiation(_)
-                | SandboxError::InvalidContract(_) => {
-                    StatusCode::BAD_REQUEST
-                }
+                | SandboxError::InvalidContract(_) => StatusCode::BAD_REQUEST,
             };
 
             (
@@ -283,7 +235,7 @@ mod tests {
     use super::*;
 
     use axum::{
-        body::{to_bytes, Body},
+        body::{Body, to_bytes},
         http::Request,
     };
 
@@ -291,29 +243,21 @@ mod tests {
 
     #[tokio::test]
     async fn health_endpoint_returns_ok() {
-        let app = create_app()
-            .expect("App should be created");
+        let app = create_app().expect("App should be created");
 
         let request = Request::builder()
             .uri("/health")
             .body(Body::empty())
             .unwrap();
 
-        let response = app
-            .oneshot(request)
-            .await
-            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
 
-        assert_eq!(
-            response.status(),
-            StatusCode::OK
-        );
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
     async fn execute_valid_guest_returns_ok() {
-        let app = create_app()
-            .expect("App should be created");
+        let app = create_app().expect("App should be created");
 
         let body = r#"{
             "code": "(module (func (export \"run\") nop))"
@@ -326,21 +270,14 @@ mod tests {
             .body(Body::from(body))
             .unwrap();
 
-        let response = app
-            .oneshot(request)
-            .await
-            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
 
-        assert_eq!(
-            response.status(),
-            StatusCode::OK
-        );
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
     async fn execute_guest_without_run_returns_bad_request() {
-        let app = create_app()
-            .expect("App should be created");
+        let app = create_app().expect("App should be created");
 
         let body = r#"{
             "code": "(module (func (export \"hello\")))"
@@ -353,21 +290,14 @@ mod tests {
             .body(Body::from(body))
             .unwrap();
 
-        let response = app
-            .oneshot(request)
-            .await
-            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
 
-        assert_eq!(
-            response.status(),
-            StatusCode::BAD_REQUEST
-        );
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
     async fn execute_endpoint_returns_guest_output() {
-        let app = create_app()
-            .expect("App should be created");
+        let app = create_app().expect("App should be created");
 
         let body = serde_json::json!({
             "code": r#"
@@ -392,38 +322,22 @@ mod tests {
             .body(Body::from(body))
             .unwrap();
 
-        let response = app
-            .oneshot(request)
-            .await
-            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
 
-        assert_eq!(
-            response.status(),
-            StatusCode::OK
-        );
+        assert_eq!(response.status(), StatusCode::OK);
 
-        let body = to_bytes(
-            response.into_body(),
-            usize::MAX,
-        )
-        .await
-        .unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
 
-        let response: ExecuteResponse =
-            serde_json::from_slice(&body).unwrap();
+        let response: ExecuteResponse = serde_json::from_slice(&body).unwrap();
 
         assert!(response.success);
 
-        assert_eq!(
-            response.output,
-            vec!["42".to_string()]
-        );
+        assert_eq!(response.output, vec!["42".to_string()]);
     }
 
     #[tokio::test]
     async fn infinite_guest_returns_unprocessable_entity() {
-        let app = create_app()
-            .expect("App should be created");
+        let app = create_app().expect("App should be created");
 
         let body = serde_json::json!({
             "code": r#"
@@ -445,21 +359,14 @@ mod tests {
             .body(Body::from(body))
             .unwrap();
 
-        let response = app
-            .oneshot(request)
-            .await
-            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
 
-        assert_eq!(
-            response.status(),
-            StatusCode::UNPROCESSABLE_ENTITY
-        );
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     #[tokio::test]
     async fn oversized_guest_output_returns_unprocessable_entity() {
-        let app = create_app()
-            .expect("App should be created");
+        let app = create_app().expect("App should be created");
 
         let body = serde_json::json!({
             "code": r#"
@@ -487,21 +394,14 @@ mod tests {
             .body(Body::from(body))
             .unwrap();
 
-        let response = app
-            .oneshot(request)
-            .await
-            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
 
-        assert_eq!(
-            response.status(),
-            StatusCode::UNPROCESSABLE_ENTITY
-        );
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     #[tokio::test]
     async fn oversized_request_is_rejected() {
-        let app = create_app()
-            .expect("App should be created");
+        let app = create_app().expect("App should be created");
 
         let oversized_code = "a".repeat(MAX_REQUEST_BYTES + 1);
 
@@ -517,23 +417,14 @@ mod tests {
             .body(Body::from(body))
             .unwrap();
 
-        let response = app
-            .oneshot(request)
-            .await
-            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
 
-        assert_eq!(
-            response.status(),
-            StatusCode::PAYLOAD_TOO_LARGE
-        );
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     #[test]
     fn invalid_environment_value_is_rejected() {
-        let result = parse_config_value::<u64>(
-            "WASMBOX_MAX_FUEL",
-            "banana",
-        );
+        let result = parse_config_value::<u64>("WASMBOX_MAX_FUEL", "banana");
 
         assert!(result.is_err());
 
@@ -545,11 +436,8 @@ mod tests {
 
     #[test]
     fn valid_environment_value_is_parsed() {
-        let result = parse_config_value::<u64>(
-            "WASMBOX_MAX_FUEL",
-            "20000",
-        )
-        .expect("Value should be valid");
+        let result =
+            parse_config_value::<u64>("WASMBOX_MAX_FUEL", "20000").expect("Value should be valid");
 
         assert_eq!(result, 20_000);
     }

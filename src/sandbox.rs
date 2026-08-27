@@ -5,7 +5,8 @@ use std::{
 };
 
 use wasmtime::{
-    Caller, Config, Engine, Instance, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc,
+    Caller, Config, Engine, Instance, Linker, Module, Store, StoreLimits, StoreLimitsBuilder,
+    TypedFunc,
 };
 
 pub const MAX_FUEL: u64 = 10_000;
@@ -76,10 +77,7 @@ pub enum ExecutionError {
 }
 
 impl std::fmt::Display for ExecutionError {
-    fn fmt(
-        &self,
-        formatter: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ExecutionError::FuelExhausted => {
                 write!(formatter, "Execution limit exceeded.")
@@ -121,10 +119,7 @@ impl std::fmt::Display for ExecutionError {
 }
 
 impl std::fmt::Display for SandboxError {
-    fn fmt(
-        &self,
-        formatter: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SandboxError::EngineCreation(message) => {
                 write!(formatter, "Failed to create sandbox: {}", message)
@@ -135,19 +130,11 @@ impl std::fmt::Display for SandboxError {
             }
 
             SandboxError::StoreCreation(message) => {
-                write!(
-                    formatter,
-                    "Failed to create sandbox store: {}",
-                    message
-                )
+                write!(formatter, "Failed to create sandbox store: {}", message)
             }
 
             SandboxError::Instantiation(message) => {
-                write!(
-                    formatter,
-                    "Could not instantiate guest: {}",
-                    message
-                )
+                write!(formatter, "Could not instantiate guest: {}", message)
             }
 
             SandboxError::InvalidContract(message) => {
@@ -168,13 +155,8 @@ pub fn create_engine() -> wasmtime::Result<Engine> {
     Engine::new(&config)
 }
 
-pub fn create_store(
-    engine: &Engine,
-) -> wasmtime::Result<Store<SandboxState>> {
-    create_store_with_config(
-        engine,
-        SandboxConfig::default(),
-    )
+pub fn create_store(engine: &Engine) -> wasmtime::Result<Store<SandboxState>> {
+    create_store_with_config(engine, SandboxConfig::default())
 }
 
 pub fn create_store_with_config(
@@ -205,9 +187,7 @@ pub fn create_store_with_config(
     Ok(store)
 }
 
-pub fn classify_execution_error(
-    error: &wasmtime::Error,
-) -> ExecutionError {
+pub fn classify_execution_error(error: &wasmtime::Error) -> ExecutionError {
     let error_message = format!("{:#}", error);
 
     if error_message.contains("fuel") {
@@ -239,16 +219,13 @@ pub fn execute_run(
 ) -> SandboxResult {
     let (cancel_sender, cancel_receiver) = mpsc::channel::<()>();
 
-    let max_execution_time_seconds =
-        store.data().config.max_execution_time_seconds;
+    let max_execution_time_seconds = store.data().config.max_execution_time_seconds;
 
     let timeout_engine = engine.clone();
 
     let timeout_handle = thread::spawn(move || {
         if cancel_receiver
-            .recv_timeout(Duration::from_secs(
-                max_execution_time_seconds
-            ))
+            .recv_timeout(Duration::from_secs(max_execution_time_seconds))
             .is_err()
         {
             timeout_engine.increment_epoch();
@@ -305,63 +282,33 @@ pub fn execute_run(
     }
 }
 
-pub fn execute_wat(
-    code: &str,
-) -> Result<SandboxResult, SandboxError> {
-    execute_wat_with_config(
-        code,
-        SandboxConfig::default(),
-    )
+pub fn execute_wat(code: &str) -> Result<SandboxResult, SandboxError> {
+    execute_wat_with_config(code, SandboxConfig::default())
 }
 
 pub fn execute_wat_with_config(
     code: &str,
     config: SandboxConfig,
 ) -> Result<SandboxResult, SandboxError> {
-    let engine = create_engine().map_err(|error| {
-        SandboxError::EngineCreation(error.to_string())
-    })?;
+    let engine =
+        create_engine().map_err(|error| SandboxError::EngineCreation(error.to_string()))?;
 
-    let module = Module::new(&engine, code).map_err(|error| {
-        SandboxError::InvalidModule(error.to_string())
-    })?;
+    let module = Module::new(&engine, code)
+        .map_err(|error| SandboxError::InvalidModule(error.to_string()))?;
 
-    let mut store =
-        create_store_with_config(&engine, config)
-            .map_err(|error| {
-                SandboxError::StoreCreation(
-                    error.to_string()
-                )
-            })?;
+    let mut store = create_store_with_config(&engine, config)
+        .map_err(|error| SandboxError::StoreCreation(error.to_string()))?;
 
-    let instance = instantiate_guest(
-        &engine,
-        &mut store,
-        &module,
-    )
-    .map_err(|error| {
-        SandboxError::Instantiation(error.to_string())
-    })?;
+    let instance = instantiate_guest(&engine, &mut store, &module)
+        .map_err(|error| SandboxError::Instantiation(error.to_string()))?;
 
-    let run = get_run_function(
-        &instance,
-        &mut store,
-    )
-    .map_err(|error| {
-        SandboxError::InvalidContract(error.to_string())
-    })?;
+    let run = get_run_function(&instance, &mut store)
+        .map_err(|error| SandboxError::InvalidContract(error.to_string()))?;
 
-    Ok(execute_run(
-        &engine,
-        &instance,
-        &run,
-        &mut store,
-    ))
+    Ok(execute_run(&engine, &instance, &run, &mut store))
 }
 
-pub fn register_print_number(
-    linker: &mut Linker<SandboxState>,
-) -> wasmtime::Result<()> {
+pub fn register_print_number(linker: &mut Linker<SandboxState>) -> wasmtime::Result<()> {
     linker.func_wrap(
         "host",
         "print_number",
@@ -371,14 +318,8 @@ pub fn register_print_number(
 
             let state = caller.data_mut();
 
-            if state
-                .output_bytes
-                .saturating_add(text_bytes)
-                > state.config.max_output_bytes
-            {
-                return Err(wasmtime::Error::msg(
-                    "output limit exceeded",
-                ));
+            if state.output_bytes.saturating_add(text_bytes) > state.config.max_output_bytes {
+                return Err(wasmtime::Error::msg("output limit exceeded"));
             }
 
             state.output_bytes += text_bytes;
@@ -391,9 +332,7 @@ pub fn register_print_number(
     Ok(())
 }
 
-pub fn register_print_text(
-    linker: &mut Linker<SandboxState>,
-) -> wasmtime::Result<()> {
+pub fn register_print_text(linker: &mut Linker<SandboxState>) -> wasmtime::Result<()> {
     linker.func_wrap("host", "print_text", host_print_text)?;
 
     Ok(())
@@ -411,20 +350,18 @@ fn host_print_text(
 
     let data = memory.data(&caller);
 
-    let start = usize::try_from(pointer)
-        .map_err(|_| wasmtime::Error::msg("invalid memory pointer"))?;
+    let start =
+        usize::try_from(pointer).map_err(|_| wasmtime::Error::msg("invalid memory pointer"))?;
 
-    let length = usize::try_from(length)
-        .map_err(|_| wasmtime::Error::msg("invalid text length"))?;
+    let length =
+        usize::try_from(length).map_err(|_| wasmtime::Error::msg("invalid text length"))?;
 
     let end = start
         .checked_add(length)
         .ok_or_else(|| wasmtime::Error::msg("invalid memory range"))?;
 
     if end > data.len() {
-        return Err(wasmtime::Error::msg(
-            "memory access out of bounds",
-        ));
+        return Err(wasmtime::Error::msg("memory access out of bounds"));
     }
 
     let bytes = &data[start..end];
@@ -437,14 +374,8 @@ fn host_print_text(
 
     let state = caller.data_mut();
 
-    if state
-        .output_bytes
-        .saturating_add(text_bytes)
-        > state.config.max_output_bytes
-    {
-        return Err(wasmtime::Error::msg(
-            "output limit exceeded",
-        ));
+    if state.output_bytes.saturating_add(text_bytes) > state.config.max_output_bytes {
+        return Err(wasmtime::Error::msg("output limit exceeded"));
     }
 
     state.output_bytes += text_bytes;
@@ -453,9 +384,7 @@ fn host_print_text(
     Ok(())
 }
 
-pub fn register_host_functions(
-    linker: &mut Linker<SandboxState>,
-) -> wasmtime::Result<()> {
+pub fn register_host_functions(linker: &mut Linker<SandboxState>) -> wasmtime::Result<()> {
     register_print_number(linker)?;
     register_print_text(linker)?;
 
@@ -483,35 +412,21 @@ pub fn get_run_function(
         .map_err(|_| wasmtime::Error::msg("Guest must export run()."))
 }
 
-pub fn validate_sandbox_config(
-    config: SandboxConfig,
-) -> Result<SandboxConfig, String> {
+pub fn validate_sandbox_config(config: SandboxConfig) -> Result<SandboxConfig, String> {
     if config.max_fuel == 0 {
-        return Err(
-            "WASMBOX_MAX_FUEL must be greater than 0."
-                .to_string(),
-        );
+        return Err("WASMBOX_MAX_FUEL must be greater than 0.".to_string());
     }
 
     if config.max_memory_bytes == 0 {
-        return Err(
-            "WASMBOX_MAX_MEMORY_BYTES must be greater than 0."
-                .to_string(),
-        );
+        return Err("WASMBOX_MAX_MEMORY_BYTES must be greater than 0.".to_string());
     }
 
     if config.max_execution_time_seconds == 0 {
-        return Err(
-            "WASMBOX_MAX_EXECUTION_TIME_SECONDS must be greater than 0."
-                .to_string(),
-        );
+        return Err("WASMBOX_MAX_EXECUTION_TIME_SECONDS must be greater than 0.".to_string());
     }
 
     if config.max_output_bytes == 0 {
-        return Err(
-            "WASMBOX_MAX_OUTPUT_BYTES must be greater than 0."
-                .to_string(),
-        );
+        return Err("WASMBOX_MAX_OUTPUT_BYTES must be greater than 0.".to_string());
     }
 
     if config.max_fuel > MAX_ALLOWED_FUEL {
@@ -528,9 +443,7 @@ pub fn validate_sandbox_config(
         ));
     }
 
-    if config.max_execution_time_seconds
-        > MAX_ALLOWED_EXECUTION_TIME_SECONDS
-    {
+    if config.max_execution_time_seconds > MAX_ALLOWED_EXECUTION_TIME_SECONDS {
         return Err(format!(
             "WASMBOX_MAX_EXECUTION_TIME_SECONDS cannot exceed {}.",
             MAX_ALLOWED_EXECUTION_TIME_SECONDS

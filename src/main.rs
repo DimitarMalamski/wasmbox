@@ -1,19 +1,11 @@
 use wasmbox::sandbox::{
-    create_engine,
-    create_store,
-    execute_run,
-    get_run_function,
-    instantiate_guest,
-    SandboxState,
-    MAX_FUEL,
-    MAX_MEMORY_BYTES,
+    MAX_FUEL, MAX_MEMORY_BYTES, SandboxState, create_engine, create_store, execute_run,
+    get_run_function, instantiate_guest,
 };
 
 use std::env;
 
-use wasmtime::{
-    Engine, Instance, Module, Store,
-};
+use wasmtime::{Engine, Instance, Module, Store};
 fn main() -> wasmtime::Result<()> {
     let engine = create_engine()?;
 
@@ -68,7 +60,6 @@ fn main() -> wasmtime::Result<()> {
 }
 
 fn load_guest(engine: &Engine, guest_path: &str) -> Option<Module> {
-
     if !std::path::Path::new(guest_path).exists() {
         println!("Reason: File does not exist.");
         return None;
@@ -76,7 +67,7 @@ fn load_guest(engine: &Engine, guest_path: &str) -> Option<Module> {
 
     match Module::from_file(engine, guest_path) {
         Ok(module) => Some(module),
-        
+
         Err(error) => {
             println!("Reason: The guest is not valid WebAssembly.");
             println!("Details: {}", error);
@@ -92,27 +83,15 @@ fn execute_guest(
     run: &wasmtime::TypedFunc<(), ()>,
     store: &mut Store<SandboxState>,
 ) {
-    let result = execute_run(
-        engine,
-        instance,
-        run,
-        store,
-    );
+    let result = execute_run(engine, instance, run, store);
 
     for line in &result.output {
         println!("Guest says: {}", line);
     }
 
-    println!(
-        "Execution time: {:.2} ms",
-        result.execution_time_ms
-    );
+    println!("Execution time: {:.2} ms", result.execution_time_ms);
 
-    println!(
-        "Fuel used: {} / {}",
-        result.fuel_used,
-        MAX_FUEL
-    );
+    println!("Fuel used: {} / {}", result.fuel_used, MAX_FUEL);
 
     println!(
         "Memory allocated: {:.2} KB / {:.2} MB",
