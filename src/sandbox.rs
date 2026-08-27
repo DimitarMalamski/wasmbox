@@ -25,6 +25,54 @@ pub struct SandboxResult {
     pub memory_used_bytes: usize,
 }
 
+#[derive(Debug)]
+pub enum SandboxError {
+    EngineCreation(String),
+    InvalidModule(String),
+    StoreCreation(String),
+    Instantiation(String),
+    InvalidContract(String),
+}
+
+impl std::fmt::Display for SandboxError {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            SandboxError::EngineCreation(message) => {
+                write!(formatter, "Failed to create sandbox: {}", message)
+            }
+
+            SandboxError::InvalidModule(message) => {
+                write!(formatter, "Invalid WebAssembly: {}", message)
+            }
+
+            SandboxError::StoreCreation(message) => {
+                write!(
+                    formatter,
+                    "Failed to create sandbox store: {}",
+                    message
+                )
+            }
+
+            SandboxError::Instantiation(message) => {
+                write!(
+                    formatter,
+                    "Could not instantiate guest: {}",
+                    message
+                )
+            }
+
+            SandboxError::InvalidContract(message) => {
+                write!(formatter, "{}", message)
+            }
+        }
+    }
+}
+
+impl std::error::Error for SandboxError {}
+
 pub fn create_engine() -> wasmtime::Result<Engine> {
     let mut config = Config::new();
 
@@ -140,21 +188,20 @@ pub fn execute_run(
     }
 }
 
-pub fn execute_wat(code: &str) -> Result<SandboxResult, String> {
-    let engine = create_engine()
-        .map_err(|error| {
-            format!("Failed to create sandbox: {}", error)
-        })?;
+pub fn execute_wat(
+    code: &str,
+) -> Result<SandboxResult, SandboxError> {
+    let engine = create_engine().map_err(|error| {
+        SandboxError::EngineCreation(error.to_string())
+    })?;
 
-    let module = Module::new(&engine, code)
-        .map_err(|error| {
-            format!("Invalid WebAssembly: {}", error)
-        })?;
+    let module = Module::new(&engine, code).map_err(|error| {
+        SandboxError::InvalidModule(error.to_string())
+    })?;
 
-    let mut store = create_store(&engine)
-        .map_err(|error| {
-            format!("Failed to create sandbox store: {}", error)
-        })?;
+    let mut store = create_store(&engine).map_err(|error| {
+        SandboxError::StoreCreation(error.to_string())
+    })?;
 
     let instance = instantiate_guest(
         &engine,
@@ -162,14 +209,16 @@ pub fn execute_wat(code: &str) -> Result<SandboxResult, String> {
         &module,
     )
     .map_err(|error| {
-        format!("Could not instantiate guest: {}", error)
+        SandboxError::Instantiation(error.to_string())
     })?;
 
     let run = get_run_function(
         &instance,
         &mut store,
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| {
+        SandboxError::InvalidContract(error.to_string())
+    })?;
 
     Ok(execute_run(
         &engine,

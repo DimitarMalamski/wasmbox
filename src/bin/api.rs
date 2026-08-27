@@ -1,4 +1,7 @@
-use wasmbox::sandbox::execute_wat;
+use wasmbox::sandbox::{
+    execute_wat,
+    SandboxError,
+};
 
 use axum::{
     extract::{DefaultBodyLimit, State},
@@ -101,48 +104,55 @@ async fn execute(
     .await;
 
     match execution {
-        Ok(Ok(result)) => (
-            StatusCode::OK,
-            Json(ExecuteResponse {
-                success: result.success,
-                message: result.message,
-                output: result.output,
-                execution_time_ms: Some(result.execution_time_ms),
-                fuel_used: Some(result.fuel_used),
-                memory_used_bytes: Some(result.memory_used_bytes),
-            }),
-        ),
+    Ok(Ok(result)) => (
+        StatusCode::OK,
+        Json(ExecuteResponse {
+            success: result.success,
+            message: result.message,
+            output: result.output,
+            execution_time_ms: Some(result.execution_time_ms),
+            fuel_used: Some(result.fuel_used),
+            memory_used_bytes: Some(result.memory_used_bytes),
+        }),
+    ),
 
-        Ok(Err(message)) => {
-            let status = if message.starts_with("Failed to create sandbox") {
+    Ok(Err(error)) => {
+        let status = match &error {
+            SandboxError::EngineCreation(_)
+            | SandboxError::StoreCreation(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
-            } else {
+            }
+
+            SandboxError::InvalidModule(_)
+            | SandboxError::Instantiation(_)
+            | SandboxError::InvalidContract(_) => {
                 StatusCode::BAD_REQUEST
-            };
+            }
+        };
 
-            (
-                status,
-                Json(ExecuteResponse {
-                    success: false,
-                    message,
-                    output: Vec::new(),
-                    execution_time_ms: None,
-                    fuel_used: None,
-                    memory_used_bytes: None,
-                }),
-            )
-        }
-
-        Err(error) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+        (
+            status,
             Json(ExecuteResponse {
                 success: false,
-                message: format!("Sandbox task failed: {}", error),
+                message: error.to_string(),
                 output: Vec::new(),
                 execution_time_ms: None,
                 fuel_used: None,
                 memory_used_bytes: None,
             }),
-        ),
+        )
     }
+
+    Err(error) => (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ExecuteResponse {
+            success: false,
+            message: format!("Sandbox task failed: {}", error),
+            output: Vec::new(),
+            execution_time_ms: None,
+            fuel_used: None,
+            memory_used_bytes: None,
+        }),
+    ),
+}
 }
