@@ -1,6 +1,7 @@
 use wasmbox::sandbox::{
-    execute_wat,
+    execute_wat_with_config,
     ExecutionError,
+    SandboxConfig,
     SandboxError,
 };
 
@@ -22,6 +23,7 @@ const MAX_CONCURRENT_EXECUTIONS: usize = 4;
 #[derive(Clone)]
 struct AppState {
     execution_semaphore: Arc<Semaphore>,
+    sandbox_config: SandboxConfig,
 }
 
 #[tokio::main]
@@ -44,6 +46,7 @@ fn create_app() -> Router {
         execution_semaphore: Arc::new(
             Semaphore::new(MAX_CONCURRENT_EXECUTIONS)
         ),
+        sandbox_config: SandboxConfig::default(),
     };
 
     Router::new()
@@ -105,90 +108,94 @@ async fn execute(
 
     let code = request.code;
 
+    let sandbox_config = state.sandbox_config.clone();
     let execution = tokio::task::spawn_blocking(move || {
         let _permit = permit;
 
-        execute_wat(&code)
+        execute_wat_with_config(
+            &code,
+            sandbox_config,
+        )
     })
     .await;
 
     match execution {
-    Ok(Ok(result)) => {
-        let status = match &result.error {
-            None => StatusCode::OK,
+        Ok(Ok(result)) => {
+            let status = match &result.error {
+                None => StatusCode::OK,
 
-            Some(ExecutionError::Timeout) => {
-                StatusCode::REQUEST_TIMEOUT
-            }
+                Some(ExecutionError::Timeout) => {
+                    StatusCode::REQUEST_TIMEOUT
+                }
 
-            Some(
-                ExecutionError::FuelExhausted
-                | ExecutionError::InvalidMemoryAccess
-                | ExecutionError::InvalidPointer
-                | ExecutionError::InvalidTextLength
-                | ExecutionError::InvalidMemoryRange
-                | ExecutionError::InvalidUtf8
-                | ExecutionError::OutputLimitExceeded
-                | ExecutionError::Other(_),
-            ) => {
-                StatusCode::UNPROCESSABLE_ENTITY
-            }
-        };
+                Some(
+                    ExecutionError::FuelExhausted
+                    | ExecutionError::InvalidMemoryAccess
+                    | ExecutionError::InvalidPointer
+                    | ExecutionError::InvalidTextLength
+                    | ExecutionError::InvalidMemoryRange
+                    | ExecutionError::InvalidUtf8
+                    | ExecutionError::OutputLimitExceeded
+                    | ExecutionError::Other(_),
+                ) => {
+                    StatusCode::UNPROCESSABLE_ENTITY
+                }
+            };
 
-        (
-            status,
-            Json(ExecuteResponse {
-                success: result.success,
-                message: result.message,
-                output: result.output,
-                execution_time_ms: Some(
-                    round_to_two_decimals(result.execution_time_ms)
-                ),
-                fuel_used: Some(result.fuel_used),
-                memory_used_bytes: Some(result.memory_used_bytes),
-            }),
-        )
-    }
+            (
+                status,
+                Json(ExecuteResponse {
+                    success: result.success,
+                    message: result.message,
+                    output: result.output,
+                    execution_time_ms: Some(
+                        round_to_two_decimals(result.execution_time_ms)
+                    ),
+                    fuel_used: Some(result.fuel_used),
+                    memory_used_bytes: Some(result.memory_used_bytes),
+                }),
+            )
+        }
 
-    Ok(Err(error)) => {
-        let status = match &error {
-            SandboxError::EngineCreation(_)
-            | SandboxError::StoreCreation(_) => {
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
+        Ok(Err(error)) => {
+            let status = match &error {
+                SandboxError::EngineCreation(_)
+                | SandboxError::StoreCreation(_) => {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
 
-            SandboxError::InvalidModule(_)
-            | SandboxError::Instantiation(_)
-            | SandboxError::InvalidContract(_) => {
-                StatusCode::BAD_REQUEST
-            }
-        };
+                SandboxError::InvalidModule(_)
+                | SandboxError::Instantiation(_)
+                | SandboxError::InvalidContract(_) => {
+                    StatusCode::BAD_REQUEST
+                }
+            };
 
-        (
-            status,
+            (
+                status,
+                Json(ExecuteResponse {
+                    success: false,
+                    message: error.to_string(),
+                    output: Vec::new(),
+                    execution_time_ms: None,
+                    fuel_used: None,
+                    memory_used_bytes: None,
+                }),
+            )
+        }
+
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
             Json(ExecuteResponse {
                 success: false,
-                message: error.to_string(),
+                message: format!("Sandbox task failed: {}", error),
                 output: Vec::new(),
                 execution_time_ms: None,
                 fuel_used: None,
                 memory_used_bytes: None,
             }),
-        )
+        ),
     }
-
-    Err(error) => (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ExecuteResponse {
-            success: false,
-            message: format!("Sandbox task failed: {}", error),
-            output: Vec::new(),
-            execution_time_ms: None,
-            fuel_used: None,
-            memory_used_bytes: None,
-        }),
-    ),
-}
 }
 
 #[cfg(test)]
