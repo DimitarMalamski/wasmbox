@@ -72,6 +72,10 @@ struct ExecuteResponse {
     memory_used_bytes: Option<usize>,
 }
 
+fn round_to_two_decimals(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
+}
+
 async fn execute(
     State(state): State<AppState>,
     Json(request): Json<ExecuteRequest>,
@@ -124,6 +128,7 @@ async fn execute(
                 | ExecutionError::InvalidTextLength
                 | ExecutionError::InvalidMemoryRange
                 | ExecutionError::InvalidUtf8
+                | ExecutionError::OutputLimitExceeded
                 | ExecutionError::Other(_),
             ) => {
                 StatusCode::UNPROCESSABLE_ENTITY
@@ -136,7 +141,9 @@ async fn execute(
                 success: result.success,
                 message: result.message,
                 output: result.output,
-                execution_time_ms: Some(result.execution_time_ms),
+                execution_time_ms: Some(
+                    round_to_two_decimals(result.execution_time_ms)
+                ),
                 fuel_used: Some(result.fuel_used),
                 memory_used_bytes: Some(result.memory_used_bytes),
             }),

@@ -11,10 +11,12 @@ use wasmtime::{
 pub const MAX_FUEL: u64 = 10_000;
 pub const MAX_MEMORY_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_EXECUTION_TIME_SECONDS: u64 = 2;
+pub const MAX_OUTPUT_BYTES: usize = 64 * 1024; // 64 KB
 
 pub struct SandboxState {
     pub limits: StoreLimits,
     pub output: Vec<String>,
+    pub output_bytes: usize,
 }
 pub struct SandboxResult {
     pub success: bool,
@@ -44,6 +46,7 @@ pub enum ExecutionError {
     InvalidTextLength,
     InvalidMemoryRange,
     InvalidUtf8,
+    OutputLimitExceeded,
     Other(String),
 }
 
@@ -79,6 +82,10 @@ impl std::fmt::Display for ExecutionError {
 
             ExecutionError::InvalidUtf8 => {
                 write!(formatter, "Guest provided invalid UTF-8 text.")
+            }
+
+            ExecutionError::OutputLimitExceeded => {
+                write!(formatter, "Guest output limit exceeded.")
             }
 
             ExecutionError::Other(message) => {
@@ -146,6 +153,7 @@ pub fn create_store(
     let state = SandboxState {
         limits,
         output: Vec::new(),
+        output_bytes: 0,
     };
 
     let mut store = Store::new(engine, state);
@@ -176,6 +184,8 @@ pub fn classify_execution_error(
         ExecutionError::InvalidMemoryRange
     } else if error_message.contains("invalid UTF-8") {
         ExecutionError::InvalidUtf8
+    } else if error_message.contains("output limit exceeded") {
+        ExecutionError::OutputLimitExceeded
     } else {
         ExecutionError::Other(error_message)
     }
@@ -296,12 +306,26 @@ pub fn register_print_number(
     linker.func_wrap(
         "host",
         "print_number",
-        |mut caller: Caller<'_, SandboxState>, number: i32| {
+        |mut caller: Caller<'_, SandboxState>, number: i32| -> wasmtime::Result<()> {
+            let text = number.to_string();
+            let text_bytes = text.len();
 
-            caller
-                .data_mut()
-                .output
-                .push(number.to_string());
+            let state = caller.data_mut();
+
+            if state
+                .output_bytes
+                .saturating_add(text_bytes)
+                > MAX_OUTPUT_BYTES
+            {
+                return Err(wasmtime::Error::msg(
+                    "output limit exceeded",
+                ));
+            }
+
+            state.output_bytes += text_bytes;
+            state.output.push(text);
+
+            Ok(())
         },
     )?;
 
@@ -350,7 +374,22 @@ fn host_print_text(
         .map_err(|_| wasmtime::Error::msg("invalid UTF-8"))?
         .to_string();
 
-    caller.data_mut().output.push(text);
+    let text_bytes = text.len();
+
+    let state = caller.data_mut();
+
+    if state
+        .output_bytes
+        .saturating_add(text_bytes)
+        > MAX_OUTPUT_BYTES
+    {
+        return Err(wasmtime::Error::msg(
+            "output limit exceeded",
+        ));
+    }
+
+    state.output_bytes += text_bytes;
+    state.output.push(text);
 
     Ok(())
 }
