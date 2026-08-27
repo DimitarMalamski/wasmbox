@@ -46,8 +46,15 @@ struct ExecuteResponse {
 async fn execute(
     Json(request): Json<ExecuteRequest>,
 ) -> Json<ExecuteResponse> {
-    match execute_wat(&request.code) {
-        Ok(result) => Json(ExecuteResponse {
+    let code = request.code;
+
+    let execution = tokio::task::spawn_blocking(move || {
+        execute_wat(&code)
+    })
+    .await;
+
+    match execution {
+        Ok(Ok(result)) => Json(ExecuteResponse {
             success: result.success,
             message: result.message,
             output: result.output,
@@ -56,9 +63,18 @@ async fn execute(
             memory_used_bytes: Some(result.memory_used_bytes),
         }),
 
-        Err(message) => Json(ExecuteResponse {
+        Ok(Err(message)) => Json(ExecuteResponse {
             success: false,
             message,
+            output: Vec::new(),
+            execution_time_ms: None,
+            fuel_used: None,
+            memory_used_bytes: None,
+        }),
+
+        Err(error) => Json(ExecuteResponse {
+            success: false,
+            message: format!("Sandbox task failed: {}", error),
             output: Vec::new(),
             execution_time_ms: None,
             fuel_used: None,
