@@ -1,3 +1,10 @@
+mod models;
+mod state;
+
+use models::{ExecuteRequest, ExecuteResponse};
+
+use state::AppState;
+
 use std::env;
 
 use wasmbox::sandbox::{
@@ -14,16 +21,8 @@ use axum::{
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
-use serde::{Deserialize, Serialize};
-
 const MAX_REQUEST_BYTES: usize = 1024 * 1024; // 1 MB
 const MAX_CONCURRENT_EXECUTIONS: usize = 4;
-
-#[derive(Clone)]
-struct AppState {
-    execution_semaphore: Arc<Semaphore>,
-    sandbox_config: SandboxConfig,
-}
 
 #[tokio::main]
 async fn main() {
@@ -107,21 +106,6 @@ fn create_app() -> Result<Router, String> {
 
 async fn health() -> &'static str {
     "WasmBox is running"
-}
-
-#[derive(Deserialize)]
-struct ExecuteRequest {
-    code: String,
-}
-
-#[derive(Serialize, Deserialize)]
-struct ExecuteResponse {
-    success: bool,
-    message: String,
-    output: Vec<String>,
-    execution_time_ms: Option<f64>,
-    fuel_used: Option<u64>,
-    memory_used_bytes: Option<usize>,
 }
 
 fn round_to_two_decimals(value: f64) -> f64 {
