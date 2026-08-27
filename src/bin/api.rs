@@ -62,7 +62,7 @@ struct ExecuteRequest {
     code: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct ExecuteResponse {
     success: bool,
     message: String,
@@ -189,7 +189,7 @@ mod tests {
     use super::*;
 
     use axum::{
-        body::Body,
+        body::{to_bytes, Body},
         http::Request,
     };
 
@@ -264,6 +264,96 @@ mod tests {
         assert_eq!(
             response.status(),
             StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_endpoint_returns_guest_output() {
+        let app = create_app();
+
+        let body = serde_json::json!({
+            "code": r#"
+                (module
+                    (import "host" "print_number"
+                        (func $print_number (param i32))
+                    )
+
+                    (func (export "run")
+                        i32.const 42
+                        call $print_number
+                    )
+                )
+            "#
+        })
+        .to_string();
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/execute")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = app
+            .oneshot(request)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::OK
+        );
+
+        let body = to_bytes(
+            response.into_body(),
+            usize::MAX,
+        )
+        .await
+        .unwrap();
+
+        let response: ExecuteResponse =
+            serde_json::from_slice(&body).unwrap();
+
+        assert!(response.success);
+
+        assert_eq!(
+            response.output,
+            vec!["42".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn infinite_guest_returns_unprocessable_entity() {
+        let app = create_app();
+
+        let body = serde_json::json!({
+            "code": r#"
+                (module
+                    (func (export "run")
+                        (loop $forever
+                            br $forever
+                        )
+                    )
+                )
+            "#
+        })
+        .to_string();
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/execute")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = app
+            .oneshot(request)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY
         );
     }
 }
