@@ -21,6 +21,10 @@ use serde::{Deserialize, Serialize};
 
 const MAX_REQUEST_BYTES: usize = 1024 * 1024; // 1 MB
 const MAX_CONCURRENT_EXECUTIONS: usize = 4;
+const MAX_ALLOWED_FUEL: u64 = 10_000_000;
+const MAX_ALLOWED_MEMORY_BYTES: usize = 256 * 1024 * 1024; // 256 MB
+const MAX_ALLOWED_EXECUTION_TIME_SECONDS: u64 = 30;
+const MAX_ALLOWED_OUTPUT_BYTES: usize = 1024 * 1024; // 1 MB
 
 #[derive(Clone)]
 struct AppState {
@@ -306,6 +310,36 @@ fn validate_sandbox_config(
             "WASMBOX_MAX_OUTPUT_BYTES must be greater than 0."
                 .to_string()
         );
+    }
+
+    if config.max_fuel > MAX_ALLOWED_FUEL {
+        return Err(format!(
+            "WASMBOX_MAX_FUEL cannot exceed {}.",
+            MAX_ALLOWED_FUEL
+        ));
+    }
+
+    if config.max_memory_bytes > MAX_ALLOWED_MEMORY_BYTES {
+        return Err(format!(
+            "WASMBOX_MAX_MEMORY_BYTES cannot exceed {}.",
+            MAX_ALLOWED_MEMORY_BYTES
+        ));
+    }
+
+    if config.max_execution_time_seconds
+        > MAX_ALLOWED_EXECUTION_TIME_SECONDS
+    {
+        return Err(format!(
+            "WASMBOX_MAX_EXECUTION_TIME_SECONDS cannot exceed {}.",
+            MAX_ALLOWED_EXECUTION_TIME_SECONDS
+        ));
+    }
+
+    if config.max_output_bytes > MAX_ALLOWED_OUTPUT_BYTES {
+        return Err(format!(
+            "WASMBOX_MAX_OUTPUT_BYTES cannot exceed {}.",
+            MAX_ALLOWED_OUTPUT_BYTES
+        ));
     }
 
     Ok(config)
@@ -601,6 +635,26 @@ mod tests {
         assert_eq!(
             result.unwrap_err(),
             "WASMBOX_MAX_FUEL must be greater than 0."
+        );
+    }
+
+    #[test]
+    fn excessive_memory_configuration_is_rejected() {
+        let config = SandboxConfig {
+            max_memory_bytes: MAX_ALLOWED_MEMORY_BYTES + 1,
+            ..Default::default()
+        };
+
+        let result = validate_sandbox_config(config);
+
+        assert!(result.is_err());
+
+        assert_eq!(
+            result.unwrap_err(),
+            format!(
+                "WASMBOX_MAX_MEMORY_BYTES cannot exceed {}.",
+                MAX_ALLOWED_MEMORY_BYTES
+            )
         );
     }
 }
