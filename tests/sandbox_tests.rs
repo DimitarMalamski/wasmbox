@@ -112,3 +112,51 @@ fn invalid_memory_access_is_rejected() {
         Some(ExecutionError::InvalidMemoryAccess)
     ));
 }
+
+#[test]
+fn guest_exceeding_memory_limit_is_rejected() {
+    let code = r#"
+        (module
+            (memory 600)
+            (func (export "run"))
+        )
+    "#;
+
+    let result = execute_wat(code);
+
+    assert!(matches!(
+        result,
+        Err(SandboxError::Instantiation(_))
+    ));
+}
+
+#[test]
+fn invalid_utf8_is_rejected() {
+    let code = r#"
+        (module
+            (import "host" "print_text"
+                (func $print_text (param i32 i32))
+            )
+
+            (memory (export "memory") 1)
+
+            (data (i32.const 0) "\ff\fe")
+
+            (func (export "run")
+                i32.const 0
+                i32.const 2
+                call $print_text
+            )
+        )
+    "#;
+
+    let result = execute_wat(code)
+        .expect("Sandbox setup should succeed");
+
+    assert!(!result.success);
+
+    assert!(matches!(
+        result.error,
+        Some(ExecutionError::InvalidUtf8)
+    ));
+}
