@@ -12,9 +12,6 @@ pub use config::{
 
 pub use error::{ExecutionError, SandboxError};
 
-pub use executor::{
-    create_engine, create_store, create_store_with_config, execute_file, execute_file_with_config,
-    execute_run, execute_wat, execute_wat_with_config, get_run_function, instantiate_guest,
-};
+pub use executor::{execute_file, execute_file_with_config, execute_wat, execute_wat_with_config};
 
-pub use state::{SandboxResult, SandboxState};
+pub use state::SandboxResult;

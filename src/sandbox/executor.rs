@@ -13,7 +13,7 @@ use super::{
     state::{SandboxResult, SandboxState},
 };
 
-pub fn create_engine() -> wasmtime::Result<Engine> {
+fn create_engine() -> wasmtime::Result<Engine> {
     let mut config = Config::new();
 
     config.consume_fuel(true);
@@ -22,11 +22,7 @@ pub fn create_engine() -> wasmtime::Result<Engine> {
     Engine::new(&config)
 }
 
-pub fn create_store(engine: &Engine) -> wasmtime::Result<Store<SandboxState>> {
-    create_store_with_config(engine, SandboxConfig::default())
-}
-
-pub fn create_store_with_config(
+fn create_store_with_config(
     engine: &Engine,
     config: SandboxConfig,
 ) -> wasmtime::Result<Store<SandboxState>> {
@@ -54,7 +50,7 @@ pub fn create_store_with_config(
     Ok(store)
 }
 
-pub fn instantiate_guest(
+fn instantiate_guest(
     engine: &Engine,
     store: &mut Store<SandboxState>,
     module: &Module,
@@ -66,7 +62,7 @@ pub fn instantiate_guest(
     linker.instantiate(store, module)
 }
 
-pub fn get_run_function(
+fn get_run_function(
     instance: &Instance,
     store: &mut Store<SandboxState>,
 ) -> wasmtime::Result<TypedFunc<(), ()>> {
@@ -75,7 +71,7 @@ pub fn get_run_function(
         .map_err(|_| wasmtime::Error::msg("Guest must export run()."))
 }
 
-pub fn execute_run(
+fn execute_run(
     engine: &Engine,
     instance: &Instance,
     run: &TypedFunc<(), ()>,
