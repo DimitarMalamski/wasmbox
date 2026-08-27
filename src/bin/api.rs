@@ -404,4 +404,33 @@ mod tests {
             StatusCode::UNPROCESSABLE_ENTITY
         );
     }
+
+    #[tokio::test]
+    async fn oversized_request_is_rejected() {
+        let app = create_app();
+
+        let oversized_code = "a".repeat(MAX_REQUEST_BYTES + 1);
+
+        let body = serde_json::json!({
+            "code": oversized_code
+        })
+        .to_string();
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/execute")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = app
+            .oneshot(request)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+    }
 }
