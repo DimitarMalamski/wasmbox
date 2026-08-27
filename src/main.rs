@@ -1,90 +1,35 @@
-use wasmbox::sandbox::{
-    MAX_FUEL, MAX_MEMORY_BYTES, SandboxState, create_engine, create_store, execute_run,
-    get_run_function, instantiate_guest,
-};
+use wasmbox::sandbox::{MAX_FUEL, MAX_MEMORY_BYTES, SandboxResult, execute_file};
 
 use std::env;
-
-use wasmtime::{Engine, Instance, Module, Store};
-fn main() -> wasmtime::Result<()> {
-    let engine = create_engine()?;
-
+use std::path::Path;
+fn main() {
     let guest_path = match get_guest_path() {
         Some(path) => path,
-        None => return Ok(()),
+        None => return,
     };
+
+    if !Path::new(&guest_path).exists() {
+        println!("Guest rejected!");
+        println!("Reason: File does not exist.");
+        return;
+    }
 
     println!("Loading guest: {}", guest_path);
+    println!("Starting guest...");
 
-    let module = match load_guest(&engine, &guest_path) {
-        Some(module) => module,
-        None => return Ok(()),
-    };
-
-    let mut store = create_store(&engine)?;
-
-    let instance = match instantiate_guest(&engine, &mut store, &module) {
-        Ok(instance) => instance,
-
-        Err(error) => {
-            let error_message = format!("{:#}", error);
-
-            println!("Guest rejected!");
-
-            if error_message.contains("memory") {
-                println!("Reason: Guest exceeded the 32 MB memory limit.");
-            } else {
-                println!("Reason: {}", error_message);
-            }
-
-            return Ok(());
+    match execute_file(&guest_path) {
+        Ok(result) => {
+            print_execution_result(&result);
         }
-    };
-
-    let run = match get_run_function(&instance, &mut store) {
-        Ok(run) => run,
 
         Err(error) => {
             println!("Guest rejected!");
             println!("Reason: {}", error);
-
-            return Ok(());
-        }
-    };
-
-    println!("Starting guest...");
-
-    execute_guest(&engine, &instance, &run, &mut store);
-
-    Ok(())
-}
-
-fn load_guest(engine: &Engine, guest_path: &str) -> Option<Module> {
-    if !std::path::Path::new(guest_path).exists() {
-        println!("Reason: File does not exist.");
-        return None;
-    }
-
-    match Module::from_file(engine, guest_path) {
-        Ok(module) => Some(module),
-
-        Err(error) => {
-            println!("Reason: The guest is not valid WebAssembly.");
-            println!("Details: {}", error);
-
-            None
         }
     }
 }
 
-fn execute_guest(
-    engine: &Engine,
-    instance: &Instance,
-    run: &wasmtime::TypedFunc<(), ()>,
-    store: &mut Store<SandboxState>,
-) {
-    let result = execute_run(engine, instance, run, store);
-
+fn print_execution_result(result: &SandboxResult) {
     for line in &result.output {
         println!("Guest says: {}", line);
     }
