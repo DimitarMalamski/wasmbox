@@ -93,7 +93,7 @@ fn load_sandbox_config() -> Result<SandboxConfig, String> {
 
     let default = SandboxConfig::default();
 
-    Ok(SandboxConfig {
+    let config = SandboxConfig {
         max_fuel: parse_env_value(
             "WASMBOX_MAX_FUEL",
             default.max_fuel,
@@ -113,7 +113,9 @@ fn load_sandbox_config() -> Result<SandboxConfig, String> {
             "WASMBOX_MAX_OUTPUT_BYTES",
             default.max_output_bytes,
         )?,
-    })
+    };
+
+    validate_sandbox_config(config)
 }
 
 fn create_app() -> Result<Router, String> {
@@ -273,6 +275,40 @@ async fn execute(
             }),
         ),
     }
+}
+
+fn validate_sandbox_config(
+    config: SandboxConfig,
+) -> Result<SandboxConfig, String> {
+    if config.max_fuel == 0 {
+        return Err(
+            "WASMBOX_MAX_FUEL must be greater than 0."
+                .to_string()
+        );
+    }
+
+    if config.max_memory_bytes == 0 {
+        return Err(
+            "WASMBOX_MAX_MEMORY_BYTES must be greater than 0."
+                .to_string()
+        );
+    }
+
+    if config.max_execution_time_seconds == 0 {
+        return Err(
+            "WASMBOX_MAX_EXECUTION_TIME_SECONDS must be greater than 0."
+                .to_string()
+        );
+    }
+
+    if config.max_output_bytes == 0 {
+        return Err(
+            "WASMBOX_MAX_OUTPUT_BYTES must be greater than 0."
+                .to_string()
+        );
+    }
+
+    Ok(config)
 }
 
 #[cfg(test)]
@@ -549,5 +585,22 @@ mod tests {
         .expect("Value should be valid");
 
         assert_eq!(result, 20_000);
+    }
+
+    #[test]
+    fn zero_fuel_configuration_is_rejected() {
+        let config = SandboxConfig {
+            max_fuel: 0,
+            ..Default::default()
+        };
+
+        let result = validate_sandbox_config(config);
+
+        assert!(result.is_err());
+
+        assert_eq!(
+            result.unwrap_err(),
+            "WASMBOX_MAX_FUEL must be greater than 0."
+        );
     }
 }
