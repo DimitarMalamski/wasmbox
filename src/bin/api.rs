@@ -363,4 +363,45 @@ mod tests {
             StatusCode::UNPROCESSABLE_ENTITY
         );
     }
+
+    #[tokio::test]
+    async fn oversized_guest_output_returns_unprocessable_entity() {
+        let app = create_app();
+
+        let body = serde_json::json!({
+            "code": r#"
+                (module
+                    (import "host" "print_text"
+                        (func $print_text (param i32 i32))
+                    )
+
+                    (memory (export "memory") 2)
+
+                    (func (export "run")
+                        i32.const 0
+                        i32.const 65537
+                        call $print_text
+                    )
+                )
+            "#
+        })
+        .to_string();
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/execute")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = app
+            .oneshot(request)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
 }

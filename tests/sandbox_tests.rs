@@ -2,6 +2,7 @@ use wasmbox::sandbox::{
     execute_wat,
     ExecutionError,
     SandboxError,
+    MAX_OUTPUT_BYTES
 };
 
 #[test]
@@ -158,5 +159,39 @@ fn invalid_utf8_is_rejected() {
     assert!(matches!(
         result.error,
         Some(ExecutionError::InvalidUtf8)
+    ));
+}
+
+#[test]
+fn guest_exceeding_output_limit_is_stopped() {
+    let output_size = MAX_OUTPUT_BYTES + 1;
+
+    let code = format!(
+        r#"
+        (module
+            (import "host" "print_text"
+                (func $print_text (param i32 i32))
+            )
+
+            (memory (export "memory") 2)
+
+            (func (export "run")
+                i32.const 0
+                i32.const {}
+                call $print_text
+            )
+        )
+        "#,
+        output_size
+    );
+
+    let result = execute_wat(&code)
+        .expect("Sandbox setup should succeed");
+
+    assert!(!result.success);
+
+    assert!(matches!(
+        result.error,
+        Some(ExecutionError::OutputLimitExceeded)
     ));
 }
