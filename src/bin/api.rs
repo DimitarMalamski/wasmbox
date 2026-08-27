@@ -30,7 +30,15 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
-    let app = create_app();
+    let app = match create_app() {
+        Ok(app) => app,
+
+        Err(error) => {
+            eprintln!("Failed to start WasmBox API.");
+            eprintln!("Reason: {}", error);
+            return;
+        }
+    };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
@@ -43,49 +51,73 @@ async fn main() {
         .unwrap();
 }
 
-fn load_sandbox_config() -> SandboxConfig {
+fn parse_env_value<T>(
+    name: &str,
+    default: T,
+) -> Result<T, String>
+where
+    T: std::str::FromStr,
+{
+    match env::var(name) {
+        Ok(value) => value.parse::<T>().map_err(|_| {
+            format!(
+                "Invalid value for environment variable {}: {}",
+                name, value
+            )
+        }),
+
+        Err(env::VarError::NotPresent) => Ok(default),
+
+        Err(error) => Err(format!(
+            "Failed to read environment variable {}: {}",
+            name, error
+        )),
+    }
+}
+
+fn load_sandbox_config() -> Result<SandboxConfig, String> {
     dotenvy::dotenv().ok();
 
     let default = SandboxConfig::default();
 
-    SandboxConfig {
-        max_fuel: env::var("WASMBOX_MAX_FUEL")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(default.max_fuel),
+    Ok(SandboxConfig {
+        max_fuel: parse_env_value(
+            "WASMBOX_MAX_FUEL",
+            default.max_fuel,
+        )?,
 
-        max_memory_bytes: env::var("WASMBOX_MAX_MEMORY_BYTES")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(default.max_memory_bytes),
+        max_memory_bytes: parse_env_value(
+            "WASMBOX_MAX_MEMORY_BYTES",
+            default.max_memory_bytes,
+        )?,
 
-        max_execution_time_seconds: env::var(
+        max_execution_time_seconds: parse_env_value(
             "WASMBOX_MAX_EXECUTION_TIME_SECONDS",
-        )
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(default.max_execution_time_seconds),
+            default.max_execution_time_seconds,
+        )?,
 
-        max_output_bytes: env::var("WASMBOX_MAX_OUTPUT_BYTES")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(default.max_output_bytes),
-    }
+        max_output_bytes: parse_env_value(
+            "WASMBOX_MAX_OUTPUT_BYTES",
+            default.max_output_bytes,
+        )?,
+    })
 }
 
-fn create_app() -> Router {
+fn create_app() -> Result<Router, String> {
     let state = AppState {
         execution_semaphore: Arc::new(
             Semaphore::new(MAX_CONCURRENT_EXECUTIONS)
         ),
-        sandbox_config: load_sandbox_config(),
+        sandbox_config: load_sandbox_config()?,
     };
 
-    Router::new()
-        .route("/health", get(health))
-        .route("/execute", post(execute))
-        .layer(DefaultBodyLimit::max(MAX_REQUEST_BYTES))
-        .with_state(state)
+    Ok(
+        Router::new()
+            .route("/health", get(health))
+            .route("/execute", post(execute))
+            .layer(DefaultBodyLimit::max(MAX_REQUEST_BYTES))
+            .with_state(state)
+    )
 }
 
 async fn health() -> &'static str {
@@ -243,7 +275,8 @@ mod tests {
 
     #[tokio::test]
     async fn health_endpoint_returns_ok() {
-        let app = create_app();
+        let app = create_app()
+            .expect("App should be created");
 
         let request = Request::builder()
             .uri("/health")
@@ -263,7 +296,8 @@ mod tests {
 
     #[tokio::test]
     async fn execute_valid_guest_returns_ok() {
-        let app = create_app();
+        let app = create_app()
+            .expect("App should be created");
 
         let body = r#"{
             "code": "(module (func (export \"run\") nop))"
@@ -289,7 +323,8 @@ mod tests {
 
     #[tokio::test]
     async fn execute_guest_without_run_returns_bad_request() {
-        let app = create_app();
+        let app = create_app()
+            .expect("App should be created");
 
         let body = r#"{
             "code": "(module (func (export \"hello\")))"
@@ -315,7 +350,8 @@ mod tests {
 
     #[tokio::test]
     async fn execute_endpoint_returns_guest_output() {
-        let app = create_app();
+        let app = create_app()
+            .expect("App should be created");
 
         let body = serde_json::json!({
             "code": r#"
@@ -370,7 +406,8 @@ mod tests {
 
     #[tokio::test]
     async fn infinite_guest_returns_unprocessable_entity() {
-        let app = create_app();
+        let app = create_app()
+            .expect("App should be created");
 
         let body = serde_json::json!({
             "code": r#"
@@ -405,7 +442,8 @@ mod tests {
 
     #[tokio::test]
     async fn oversized_guest_output_returns_unprocessable_entity() {
-        let app = create_app();
+        let app = create_app()
+            .expect("App should be created");
 
         let body = serde_json::json!({
             "code": r#"
@@ -446,7 +484,8 @@ mod tests {
 
     #[tokio::test]
     async fn oversized_request_is_rejected() {
-        let app = create_app();
+        let app = create_app()
+            .expect("App should be created");
 
         let oversized_code = "a".repeat(MAX_REQUEST_BYTES + 1);
 
