@@ -13,6 +13,11 @@ pub const MAX_MEMORY_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_EXECUTION_TIME_SECONDS: u64 = 2;
 pub const MAX_OUTPUT_BYTES: usize = 64 * 1024; // 64 KB
 
+pub const MAX_ALLOWED_FUEL: u64 = 10_000_000;
+pub const MAX_ALLOWED_MEMORY_BYTES: usize = 256 * 1024 * 1024; // 256 MB
+pub const MAX_ALLOWED_EXECUTION_TIME_SECONDS: u64 = 30;
+pub const MAX_ALLOWED_OUTPUT_BYTES: usize = 1024 * 1024; // 1 MB
+
 #[derive(Debug, Clone)]
 pub struct SandboxConfig {
     pub max_fuel: u64,
@@ -476,4 +481,68 @@ pub fn get_run_function(
     instance
         .get_typed_func::<(), ()>(store, "run")
         .map_err(|_| wasmtime::Error::msg("Guest must export run()."))
+}
+
+pub fn validate_sandbox_config(
+    config: SandboxConfig,
+) -> Result<SandboxConfig, String> {
+    if config.max_fuel == 0 {
+        return Err(
+            "WASMBOX_MAX_FUEL must be greater than 0."
+                .to_string(),
+        );
+    }
+
+    if config.max_memory_bytes == 0 {
+        return Err(
+            "WASMBOX_MAX_MEMORY_BYTES must be greater than 0."
+                .to_string(),
+        );
+    }
+
+    if config.max_execution_time_seconds == 0 {
+        return Err(
+            "WASMBOX_MAX_EXECUTION_TIME_SECONDS must be greater than 0."
+                .to_string(),
+        );
+    }
+
+    if config.max_output_bytes == 0 {
+        return Err(
+            "WASMBOX_MAX_OUTPUT_BYTES must be greater than 0."
+                .to_string(),
+        );
+    }
+
+    if config.max_fuel > MAX_ALLOWED_FUEL {
+        return Err(format!(
+            "WASMBOX_MAX_FUEL cannot exceed {}.",
+            MAX_ALLOWED_FUEL
+        ));
+    }
+
+    if config.max_memory_bytes > MAX_ALLOWED_MEMORY_BYTES {
+        return Err(format!(
+            "WASMBOX_MAX_MEMORY_BYTES cannot exceed {}.",
+            MAX_ALLOWED_MEMORY_BYTES
+        ));
+    }
+
+    if config.max_execution_time_seconds
+        > MAX_ALLOWED_EXECUTION_TIME_SECONDS
+    {
+        return Err(format!(
+            "WASMBOX_MAX_EXECUTION_TIME_SECONDS cannot exceed {}.",
+            MAX_ALLOWED_EXECUTION_TIME_SECONDS
+        ));
+    }
+
+    if config.max_output_bytes > MAX_ALLOWED_OUTPUT_BYTES {
+        return Err(format!(
+            "WASMBOX_MAX_OUTPUT_BYTES cannot exceed {}.",
+            MAX_ALLOWED_OUTPUT_BYTES
+        ));
+    }
+
+    Ok(config)
 }

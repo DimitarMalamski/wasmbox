@@ -1,9 +1,11 @@
 use wasmbox::sandbox::{
     execute_wat,
     execute_wat_with_config,
+    validate_sandbox_config,
     ExecutionError,
     SandboxConfig,
     SandboxError,
+    MAX_ALLOWED_MEMORY_BYTES,
     MAX_OUTPUT_BYTES,
 };
 
@@ -228,4 +230,41 @@ fn infinite_guest_is_stopped_by_timeout() {
         result.error,
         Some(ExecutionError::Timeout)
     ));
+}
+
+#[test]
+fn zero_fuel_configuration_is_rejected() {
+    let config = SandboxConfig {
+        max_fuel: 0,
+        ..Default::default()
+    };
+
+    let result = validate_sandbox_config(config);
+
+    assert!(result.is_err());
+
+    assert_eq!(
+        result.unwrap_err(),
+        "WASMBOX_MAX_FUEL must be greater than 0."
+    );
+}
+
+#[test]
+fn excessive_memory_configuration_is_rejected() {
+    let config = SandboxConfig {
+        max_memory_bytes: MAX_ALLOWED_MEMORY_BYTES + 1,
+        ..Default::default()
+    };
+
+    let result = validate_sandbox_config(config);
+
+    assert!(result.is_err());
+
+    assert_eq!(
+        result.unwrap_err(),
+        format!(
+            "WASMBOX_MAX_MEMORY_BYTES cannot exceed {}.",
+            MAX_ALLOWED_MEMORY_BYTES
+        )
+    );
 }
