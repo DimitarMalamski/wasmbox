@@ -2,6 +2,7 @@ use wasmbox::sandbox::execute_wat;
 
 use axum::{
     extract::{DefaultBodyLimit, State},
+    http::StatusCode,
     routing::{get, post},
     Json, Router,
 };
@@ -66,7 +67,7 @@ struct ExecuteResponse {
 async fn execute(
     State(state): State<AppState>,
     Json(request): Json<ExecuteRequest>,
-) -> Json<ExecuteResponse> {
+) -> (StatusCode, Json<ExecuteResponse>) {
     let permit = match state
         .execution_semaphore
         .clone()
@@ -75,15 +76,18 @@ async fn execute(
         Ok(permit) => permit,
 
         Err(_) => {
-            return Json(ExecuteResponse {
-                success: false,
-                message: "Server is busy. Too many concurrent executions."
-                    .to_string(),
-                output: Vec::new(),
-                execution_time_ms: None,
-                fuel_used: None,
-                memory_used_bytes: None,
-            });
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(ExecuteResponse {
+                    success: false,
+                    message: "Server is busy. Too many concurrent executions."
+                        .to_string(),
+                    output: Vec::new(),
+                    execution_time_ms: None,
+                    fuel_used: None,
+                    memory_used_bytes: None,
+                }),
+            );
         }
     };
 
@@ -97,31 +101,48 @@ async fn execute(
     .await;
 
     match execution {
-        Ok(Ok(result)) => Json(ExecuteResponse {
-            success: result.success,
-            message: result.message,
-            output: result.output,
-            execution_time_ms: Some(result.execution_time_ms),
-            fuel_used: Some(result.fuel_used),
-            memory_used_bytes: Some(result.memory_used_bytes),
-        }),
+        Ok(Ok(result)) => (
+            StatusCode::OK,
+            Json(ExecuteResponse {
+                success: result.success,
+                message: result.message,
+                output: result.output,
+                execution_time_ms: Some(result.execution_time_ms),
+                fuel_used: Some(result.fuel_used),
+                memory_used_bytes: Some(result.memory_used_bytes),
+            }),
+        ),
 
-        Ok(Err(message)) => Json(ExecuteResponse {
-            success: false,
-            message,
-            output: Vec::new(),
-            execution_time_ms: None,
-            fuel_used: None,
-            memory_used_bytes: None,
-        }),
+        Ok(Err(message)) => {
+            let status = if message.starts_with("Failed to create sandbox") {
+                StatusCode::INTERNAL_SERVER_ERROR
+            } else {
+                StatusCode::BAD_REQUEST
+            };
 
-        Err(error) => Json(ExecuteResponse {
-            success: false,
-            message: format!("Sandbox task failed: {}", error),
-            output: Vec::new(),
-            execution_time_ms: None,
-            fuel_used: None,
-            memory_used_bytes: None,
-        }),
+            (
+                status,
+                Json(ExecuteResponse {
+                    success: false,
+                    message,
+                    output: Vec::new(),
+                    execution_time_ms: None,
+                    fuel_used: None,
+                    memory_used_bytes: None,
+                }),
+            )
+        }
+
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ExecuteResponse {
+                success: false,
+                message: format!("Sandbox task failed: {}", error),
+                output: Vec::new(),
+                execution_time_ms: None,
+                fuel_used: None,
+                memory_used_bytes: None,
+            }),
+        ),
     }
 }
