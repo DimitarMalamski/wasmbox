@@ -1,3 +1,5 @@
+use std::env;
+
 use wasmbox::sandbox::{
     execute_wat_with_config,
     ExecutionError,
@@ -41,12 +43,42 @@ async fn main() {
         .unwrap();
 }
 
+fn load_sandbox_config() -> SandboxConfig {
+    dotenvy::dotenv().ok();
+
+    let default = SandboxConfig::default();
+
+    SandboxConfig {
+        max_fuel: env::var("WASMBOX_MAX_FUEL")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default.max_fuel),
+
+        max_memory_bytes: env::var("WASMBOX_MAX_MEMORY_BYTES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default.max_memory_bytes),
+
+        max_execution_time_seconds: env::var(
+            "WASMBOX_MAX_EXECUTION_TIME_SECONDS",
+        )
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default.max_execution_time_seconds),
+
+        max_output_bytes: env::var("WASMBOX_MAX_OUTPUT_BYTES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default.max_output_bytes),
+    }
+}
+
 fn create_app() -> Router {
     let state = AppState {
         execution_semaphore: Arc::new(
             Semaphore::new(MAX_CONCURRENT_EXECUTIONS)
         ),
-        sandbox_config: SandboxConfig::default(),
+        sandbox_config: load_sandbox_config(),
     };
 
     Router::new()
