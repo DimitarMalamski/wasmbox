@@ -1,9 +1,10 @@
 use wasmbox::sandbox::{
     create_engine,
     create_store,
+    execute_run,
     get_run_function,
     instantiate_guest,
-    MAX_EXECUTION_TIME_SECONDS,
+    SandboxState,
     MAX_FUEL,
     MAX_MEMORY_BYTES,
 };
@@ -13,10 +14,6 @@ use std::env;
 use wasmtime::{
     Engine, Instance, Module, Store,
 };
-
-use std::time::{Duration, Instant};
-use std::thread;
-use std::sync::mpsc;
 fn main() -> wasmtime::Result<()> {
     let engine = create_engine()?;
 
@@ -93,78 +90,41 @@ fn execute_guest(
     engine: &Engine,
     instance: &Instance,
     run: &wasmtime::TypedFunc<(), ()>,
-    store: &mut Store<wasmtime::StoreLimits>,
+    store: &mut Store<SandboxState>,
 ) {
-    let (cancel_sender, cancel_receiver) = mpsc::channel::<()>();
+    let result = execute_run(
+        engine,
+        instance,
+        run,
+        store,
+    );
 
-    let timeout_engine = engine.clone();
+    for line in &result.output {
+        println!("Guest says: {}", line);
+    }
 
-    let timeout_handle = thread::spawn(move || {
-        if cancel_receiver
-            .recv_timeout(Duration::from_secs(MAX_EXECUTION_TIME_SECONDS))
-            .is_err()
-        {
-            timeout_engine.increment_epoch();
-        }
-    });
+    println!(
+        "Execution time: {:.2} ms",
+        result.execution_time_ms
+    );
 
-    let start = Instant::now();
-
-    let fuel_before = store.get_fuel().unwrap_or(0);
-
-    let execution_result = run.call(&mut *store, ());
-
-    let guest_memory = instance.get_memory(&mut *store, "memory");
-    let memory_used_bytes = match guest_memory {
-        Some(memory) => memory.data_size(&*store),
-        None => 0,
-    };
-
-    let remaining_fuel = store.get_fuel().unwrap_or(0);
-    let fuel_used = fuel_before.saturating_sub(remaining_fuel);
-
-    let _ = cancel_sender.send(());
-    let _ = timeout_handle.join();
-
-    let duration = start.elapsed();
-
-    println!("Execution time: {:.2} ms", duration.as_secs_f64() * 1000.0);
-    println!("Fuel used: {} / {}", fuel_used, MAX_FUEL);
+    println!(
+        "Fuel used: {} / {}",
+        result.fuel_used,
+        MAX_FUEL
+    );
 
     println!(
         "Memory allocated: {:.2} KB / {:.2} MB",
-        memory_used_bytes as f64 / 1024.0,
+        result.memory_used_bytes as f64 / 1024.0,
         MAX_MEMORY_BYTES as f64 / (1024.0 * 1024.0)
     );
 
-    match execution_result {
-        Ok(_) => {
-            println!("Guest finished successfully.");
-        }
-
-        Err(error) => {
-            println!("Guest was stopped!");
-
-            let error_message = format!("{:#}", error);
-
-            if error_message.contains("fuel") {
-                println!("Reason: Execution limit exceeded.");
-            } else if error_message.contains("wasm trap: interrupt") {
-                println!("Reason: Maximum execution time exceeded.");
-            } else if error_message.contains("memory access out of bounds") {
-                println!("Reason: Guest attempted invalid memory access.");
-            } else if error_message.contains("invalid memory pointer") {
-                println!("Reason: Guest provided an invalid memory pointer.");
-            } else if error_message.contains("invalid text length") {
-                println!("Reason: Guest provided an invalid text length.");
-            } else if error_message.contains("invalid memory range") {
-                println!("Reason: Guest provided an invalid memory range.");
-            } else if error_message.contains("invalid UTF-8") {
-                println!("Reason: Guest provided invalid UTF-8 text.");
-            } else {
-                println!("Reason: {}", error_message);
-            }
-        }
+    if result.success {
+        println!("Guest finished successfully.");
+    } else {
+        println!("Guest was stopped!");
+        println!("Reason: {}", result.message);
     }
 }
 

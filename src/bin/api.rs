@@ -1,12 +1,4 @@
-use wasmbox::sandbox::{
-    create_engine,
-    create_store,
-    execute_run,
-    get_run_function,
-    instantiate_guest,
-};
-
-use wasmtime::Module;
+use wasmbox::sandbox::execute_wat;
 
 use axum::{
     routing::{get, post},
@@ -45,6 +37,7 @@ struct ExecuteRequest {
 struct ExecuteResponse {
     success: bool,
     message: String,
+    output: Vec<String>,
     execution_time_ms: Option<f64>,
     fuel_used: Option<u64>,
     memory_used_bytes: Option<usize>,
@@ -53,91 +46,23 @@ struct ExecuteResponse {
 async fn execute(
     Json(request): Json<ExecuteRequest>,
 ) -> Json<ExecuteResponse> {
-    let engine = match create_engine() {
-      Ok(engine) => engine,
+    match execute_wat(&request.code) {
+        Ok(result) => Json(ExecuteResponse {
+            success: result.success,
+            message: result.message,
+            output: result.output,
+            execution_time_ms: Some(result.execution_time_ms),
+            fuel_used: Some(result.fuel_used),
+            memory_used_bytes: Some(result.memory_used_bytes),
+        }),
 
-      Err(error) => {
-          return Json(ExecuteResponse {
-              success: false,
-              message: format!("Failed to create sandbox: {}", error),
-              execution_time_ms: None,
-              fuel_used: None,
-              memory_used_bytes: None,
-          });
-      }
-    };
-
-    let module = match Module::new(&engine, &request.code) {
-      Ok(module) => module,
-      Err(error) => {
-          return Json(ExecuteResponse {
-              success: false,
-              message: format!("Invalid WebAssembly: {}", error),
-              execution_time_ms: None,
-              fuel_used: None,
-              memory_used_bytes: None,
-          });
-      }
-    };
-
-    let mut store = match create_store(&engine) {
-      Ok(store) => store,
-
-      Err(error) => {
-          return Json(ExecuteResponse {
-              success: false,
-              message: format!("Failed to create sandbox store: {}", error),
-              execution_time_ms: None,
-              fuel_used: None,
-              memory_used_bytes: None,
-          });
-      }
-    };
-
-    let instance = match instantiate_guest(
-        &engine,
-        &mut store,
-        &module,
-    ) {
-        Ok(instance) => instance,
-
-        Err(error) => {
-            return Json(ExecuteResponse {
-                success: false,
-                message: format!("Could not instantiate guest: {}", error),
-                execution_time_ms: None,
-                fuel_used: None,
-                memory_used_bytes: None,
-            });
-        }
-    };
-
-    let run = match get_run_function(&instance, &mut store) {
-        Ok(run) => run,
-
-        Err(error) => {
-            return Json(ExecuteResponse {
-                success: false,
-                message: error.to_string(),
-                execution_time_ms: None,
-                fuel_used: None,
-                memory_used_bytes: None,
-            });
-        }
-    };
-
-    let result = execute_run(
-        &engine,
-        &instance,
-        &run,
-        &mut store,
-    );
-
-    Json(ExecuteResponse {
-        success: result.success,
-        message: result.message,
-        execution_time_ms: Some(result.execution_time_ms),
-        fuel_used: Some(result.fuel_used),
-        memory_used_bytes: Some(result.memory_used_bytes),
-    })
+        Err(message) => Json(ExecuteResponse {
+            success: false,
+            message,
+            output: Vec::new(),
+            execution_time_ms: None,
+            fuel_used: None,
+            memory_used_bytes: None,
+        }),
+    }
 }

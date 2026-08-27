@@ -11,6 +11,7 @@ use wasmtime::{
 pub const MAX_FUEL: u64 = 10_000;
 pub const MAX_MEMORY_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_EXECUTION_TIME_SECONDS: u64 = 2;
+
 pub struct SandboxState {
     pub limits: StoreLimits,
     pub output: Vec<String>,
@@ -18,6 +19,7 @@ pub struct SandboxState {
 pub struct SandboxResult {
     pub success: bool,
     pub message: String,
+    pub output: Vec<String>,
     pub execution_time_ms: f64,
     pub fuel_used: u64,
     pub memory_used_bytes: usize,
@@ -34,14 +36,19 @@ pub fn create_engine() -> wasmtime::Result<Engine> {
 
 pub fn create_store(
     engine: &Engine,
-) -> wasmtime::Result<Store<StoreLimits>> {
+) -> wasmtime::Result<Store<SandboxState>> {
     let limits = StoreLimitsBuilder::new()
         .memory_size(MAX_MEMORY_BYTES)
         .build();
 
-    let mut store = Store::new(engine, limits);
+    let state = SandboxState {
+        limits,
+        output: Vec::new(),
+    };
 
-    store.limiter(|limits| limits);
+    let mut store = Store::new(engine, state);
+
+    store.limiter(|state| &mut state.limits);
     store.set_fuel(MAX_FUEL)?;
     store.set_epoch_deadline(1);
 
@@ -74,7 +81,7 @@ pub fn execute_run(
     engine: &Engine,
     instance: &Instance,
     run: &TypedFunc<(), ()>,
-    store: &mut Store<StoreLimits>,
+    store: &mut Store<SandboxState>,
 ) -> SandboxResult {
     let (cancel_sender, cancel_receiver) = mpsc::channel::<()>();
 
@@ -105,6 +112,8 @@ pub fn execute_run(
         None => 0,
     };
 
+    let output = store.data().output.clone();
+
     let _ = cancel_sender.send(());
     let _ = timeout_handle.join();
 
@@ -114,6 +123,7 @@ pub fn execute_run(
         Ok(_) => SandboxResult {
             success: true,
             message: "Guest executed successfully.".to_string(),
+            output: output.clone(),
             execution_time_ms,
             fuel_used,
             memory_used_bytes,
@@ -122,6 +132,7 @@ pub fn execute_run(
         Err(error) => SandboxResult {
             success: false,
             message: friendly_execution_error(&error),
+            output,
             execution_time_ms,
             fuel_used,
             memory_used_bytes,
@@ -129,18 +140,65 @@ pub fn execute_run(
     }
 }
 
-pub fn register_print_number(
-    linker: &mut Linker<StoreLimits>,
-) -> wasmtime::Result<()> {
-    linker.func_wrap("host", "print_number", |number: i32| {
-        println!("Guest says: {}", number);
+pub fn execute_wat(code: &str) -> Result<SandboxResult, String> {
+    let engine = create_engine()
+        .map_err(|error| {
+            format!("Failed to create sandbox: {}", error)
+        })?;
+
+    let module = Module::new(&engine, code)
+        .map_err(|error| {
+            format!("Invalid WebAssembly: {}", error)
+        })?;
+
+    let mut store = create_store(&engine)
+        .map_err(|error| {
+            format!("Failed to create sandbox store: {}", error)
+        })?;
+
+    let instance = instantiate_guest(
+        &engine,
+        &mut store,
+        &module,
+    )
+    .map_err(|error| {
+        format!("Could not instantiate guest: {}", error)
     })?;
+
+    let run = get_run_function(
+        &instance,
+        &mut store,
+    )
+    .map_err(|error| error.to_string())?;
+
+    Ok(execute_run(
+        &engine,
+        &instance,
+        &run,
+        &mut store,
+    ))
+}
+
+pub fn register_print_number(
+    linker: &mut Linker<SandboxState>,
+) -> wasmtime::Result<()> {
+    linker.func_wrap(
+        "host",
+        "print_number",
+        |mut caller: Caller<'_, SandboxState>, number: i32| {
+
+            caller
+                .data_mut()
+                .output
+                .push(number.to_string());
+        },
+    )?;
 
     Ok(())
 }
 
 pub fn register_print_text(
-    linker: &mut Linker<StoreLimits>,
+    linker: &mut Linker<SandboxState>,
 ) -> wasmtime::Result<()> {
     linker.func_wrap("host", "print_text", host_print_text)?;
 
@@ -148,7 +206,7 @@ pub fn register_print_text(
 }
 
 fn host_print_text(
-    mut caller: Caller<'_, StoreLimits>,
+    mut caller: Caller<'_, SandboxState>,
     pointer: i32,
     length: i32,
 ) -> wasmtime::Result<()> {
@@ -178,15 +236,16 @@ fn host_print_text(
     let bytes = &data[start..end];
 
     let text = std::str::from_utf8(bytes)
-        .map_err(|_| wasmtime::Error::msg("invalid UTF-8"))?;
+        .map_err(|_| wasmtime::Error::msg("invalid UTF-8"))?
+        .to_string();
 
-    println!("Guest says: {}", text);
+    caller.data_mut().output.push(text);
 
     Ok(())
 }
 
 pub fn register_host_functions(
-    linker: &mut Linker<StoreLimits>,
+    linker: &mut Linker<SandboxState>,
 ) -> wasmtime::Result<()> {
     register_print_number(linker)?;
     register_print_text(linker)?;
@@ -196,7 +255,7 @@ pub fn register_host_functions(
 
 pub fn instantiate_guest(
     engine: &Engine,
-    store: &mut Store<StoreLimits>,
+    store: &mut Store<SandboxState>,
     module: &Module,
 ) -> wasmtime::Result<Instance> {
     let mut linker = Linker::new(engine);
@@ -208,7 +267,7 @@ pub fn instantiate_guest(
 
 pub fn get_run_function(
     instance: &Instance,
-    store: &mut Store<StoreLimits>,
+    store: &mut Store<SandboxState>,
 ) -> wasmtime::Result<TypedFunc<(), ()>> {
     instance
         .get_typed_func::<(), ()>(store, "run")
