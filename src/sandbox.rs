@@ -13,10 +13,30 @@ pub const MAX_MEMORY_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_EXECUTION_TIME_SECONDS: u64 = 2;
 pub const MAX_OUTPUT_BYTES: usize = 64 * 1024; // 64 KB
 
+#[derive(Debug, Clone)]
+pub struct SandboxConfig {
+    pub max_fuel: u64,
+    pub max_memory_bytes: usize,
+    pub max_execution_time_seconds: u64,
+    pub max_output_bytes: usize,
+}
+
+impl Default for SandboxConfig {
+    fn default() -> Self {
+        Self {
+            max_fuel: MAX_FUEL,
+            max_memory_bytes: MAX_MEMORY_BYTES,
+            max_execution_time_seconds: MAX_EXECUTION_TIME_SECONDS,
+            max_output_bytes: MAX_OUTPUT_BYTES,
+        }
+    }
+}
+
 pub struct SandboxState {
     pub limits: StoreLimits,
     pub output: Vec<String>,
     pub output_bytes: usize,
+    pub config: SandboxConfig,
 }
 pub struct SandboxResult {
     pub success: bool,
@@ -146,20 +166,35 @@ pub fn create_engine() -> wasmtime::Result<Engine> {
 pub fn create_store(
     engine: &Engine,
 ) -> wasmtime::Result<Store<SandboxState>> {
+    create_store_with_config(
+        engine,
+        SandboxConfig::default(),
+    )
+}
+
+pub fn create_store_with_config(
+    engine: &Engine,
+    config: SandboxConfig,
+) -> wasmtime::Result<Store<SandboxState>> {
     let limits = StoreLimitsBuilder::new()
-        .memory_size(MAX_MEMORY_BYTES)
+        .memory_size(config.max_memory_bytes)
         .build();
 
-    let state = SandboxState {
-        limits,
-        output: Vec::new(),
-        output_bytes: 0,
-    };
-
-    let mut store = Store::new(engine, state);
+    let mut store = Store::new(
+        engine,
+        SandboxState {
+            limits,
+            output: Vec::new(),
+            output_bytes: 0,
+            config,
+        },
+    );
 
     store.limiter(|state| &mut state.limits);
-    store.set_fuel(MAX_FUEL)?;
+
+    let max_fuel = store.data().config.max_fuel;
+    store.set_fuel(max_fuel)?;
+
     store.set_epoch_deadline(1);
 
     Ok(store)
@@ -199,11 +234,16 @@ pub fn execute_run(
 ) -> SandboxResult {
     let (cancel_sender, cancel_receiver) = mpsc::channel::<()>();
 
+    let max_execution_time_seconds =
+        store.data().config.max_execution_time_seconds;
+
     let timeout_engine = engine.clone();
 
     let timeout_handle = thread::spawn(move || {
         if cancel_receiver
-            .recv_timeout(Duration::from_secs(MAX_EXECUTION_TIME_SECONDS))
+            .recv_timeout(Duration::from_secs(
+                max_execution_time_seconds
+            ))
             .is_err()
         {
             timeout_engine.increment_epoch();
@@ -263,6 +303,16 @@ pub fn execute_run(
 pub fn execute_wat(
     code: &str,
 ) -> Result<SandboxResult, SandboxError> {
+    execute_wat_with_config(
+        code,
+        SandboxConfig::default(),
+    )
+}
+
+pub fn execute_wat_with_config(
+    code: &str,
+    config: SandboxConfig,
+) -> Result<SandboxResult, SandboxError> {
     let engine = create_engine().map_err(|error| {
         SandboxError::EngineCreation(error.to_string())
     })?;
@@ -271,9 +321,13 @@ pub fn execute_wat(
         SandboxError::InvalidModule(error.to_string())
     })?;
 
-    let mut store = create_store(&engine).map_err(|error| {
-        SandboxError::StoreCreation(error.to_string())
-    })?;
+    let mut store =
+        create_store_with_config(&engine, config)
+            .map_err(|error| {
+                SandboxError::StoreCreation(
+                    error.to_string()
+                )
+            })?;
 
     let instance = instantiate_guest(
         &engine,
@@ -315,7 +369,7 @@ pub fn register_print_number(
             if state
                 .output_bytes
                 .saturating_add(text_bytes)
-                > MAX_OUTPUT_BYTES
+                > state.config.max_output_bytes
             {
                 return Err(wasmtime::Error::msg(
                     "output limit exceeded",
@@ -381,7 +435,7 @@ fn host_print_text(
     if state
         .output_bytes
         .saturating_add(text_bytes)
-        > MAX_OUTPUT_BYTES
+        > state.config.max_output_bytes
     {
         return Err(wasmtime::Error::msg(
             "output limit exceeded",

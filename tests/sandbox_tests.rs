@@ -1,8 +1,10 @@
 use wasmbox::sandbox::{
     execute_wat,
+    execute_wat_with_config,
     ExecutionError,
+    SandboxConfig,
     SandboxError,
-    MAX_OUTPUT_BYTES
+    MAX_OUTPUT_BYTES,
 };
 
 #[test]
@@ -193,5 +195,37 @@ fn guest_exceeding_output_limit_is_stopped() {
     assert!(matches!(
         result.error,
         Some(ExecutionError::OutputLimitExceeded)
+    ));
+}
+
+#[test]
+fn infinite_guest_is_stopped_by_timeout() {
+    let code = r#"
+        (module
+            (func (export "run")
+                (loop $forever
+                    br $forever
+                )
+            )
+        )
+    "#;
+
+    let config = SandboxConfig {
+        max_fuel: u64::MAX,
+        max_execution_time_seconds: 1,
+        ..Default::default()
+    };
+
+    let result = execute_wat_with_config(
+        code,
+        config,
+    )
+    .expect("Sandbox setup should succeed");
+
+    assert!(!result.success);
+
+    assert!(matches!(
+        result.error,
+        Some(ExecutionError::Timeout)
     ));
 }
