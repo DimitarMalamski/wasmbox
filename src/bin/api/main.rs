@@ -1,25 +1,10 @@
 mod config;
 mod handlers;
 mod models;
+mod router;
 mod state;
 
-use config::load_sandbox_config;
-
-use handlers::{execute, health};
-
-use state::AppState;
-
-use axum::{
-    Router,
-    extract::DefaultBodyLimit,
-    routing::{get, post},
-};
-
-use std::sync::Arc;
-use tokio::sync::Semaphore;
-
-const MAX_REQUEST_BYTES: usize = 1024 * 1024; // 1 MB
-const MAX_CONCURRENT_EXECUTIONS: usize = 4;
+use router::create_app;
 
 #[tokio::main]
 async fn main() {
@@ -41,25 +26,12 @@ async fn main() {
 
     axum::serve(listener, app).await.unwrap();
 }
-
-fn create_app() -> Result<Router, String> {
-    let state = AppState {
-        execution_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_EXECUTIONS)),
-        sandbox_config: load_sandbox_config()?,
-    };
-
-    Ok(Router::new()
-        .route("/health", get(health))
-        .route("/execute", post(execute))
-        .layer(DefaultBodyLimit::max(MAX_REQUEST_BYTES))
-        .with_state(state))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    use crate::models::ExecuteResponse;
+    use crate::{
+        models::ExecuteResponse,
+        router::{MAX_REQUEST_BYTES, create_app},
+    };
 
     use axum::{
         body::{Body, to_bytes},
