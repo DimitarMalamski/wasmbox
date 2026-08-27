@@ -26,17 +26,7 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
-    let state = AppState {
-        execution_semaphore: Arc::new(
-            Semaphore::new(MAX_CONCURRENT_EXECUTIONS)
-        ),
-    };
-
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/execute", post(execute))
-        .layer(DefaultBodyLimit::max(MAX_REQUEST_BYTES))
-        .with_state(state);
+    let app = create_app();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
@@ -47,6 +37,20 @@ async fn main() {
     axum::serve(listener, app)
         .await
         .unwrap();
+}
+
+fn create_app() -> Router {
+    let state = AppState {
+        execution_semaphore: Arc::new(
+            Semaphore::new(MAX_CONCURRENT_EXECUTIONS)
+        ),
+    };
+
+    Router::new()
+        .route("/health", get(health))
+        .route("/execute", post(execute))
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BYTES))
+        .with_state(state)
 }
 
 async fn health() -> &'static str {
@@ -178,4 +182,88 @@ async fn execute(
         }),
     ),
 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use axum::{
+        body::Body,
+        http::Request,
+    };
+
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn health_endpoint_returns_ok() {
+        let app = create_app();
+
+        let request = Request::builder()
+            .uri("/health")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app
+            .oneshot(request)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_valid_guest_returns_ok() {
+        let app = create_app();
+
+        let body = r#"{
+            "code": "(module (func (export \"run\") nop))"
+        }"#;
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/execute")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = app
+            .oneshot(request)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_guest_without_run_returns_bad_request() {
+        let app = create_app();
+
+        let body = r#"{
+            "code": "(module (func (export \"hello\")))"
+        }"#;
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/execute")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = app
+            .oneshot(request)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
 }

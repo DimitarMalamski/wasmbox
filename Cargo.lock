@@ -1603,6 +1603,7 @@ dependencies = [
  "axum",
  "serde",
  "tokio",
+ "tower",
  "wasmtime",
 ]
 
