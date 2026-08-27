@@ -51,6 +51,21 @@ async fn main() {
         .unwrap();
 }
 
+fn parse_config_value<T>(
+    name: &str,
+    value: &str,
+) -> Result<T, String>
+where
+    T: std::str::FromStr,
+{
+    value.parse::<T>().map_err(|_| {
+        format!(
+            "Invalid value for environment variable {}: {}",
+            name, value
+        )
+    })
+}
+
 fn parse_env_value<T>(
     name: &str,
     default: T,
@@ -59,12 +74,10 @@ where
     T: std::str::FromStr,
 {
     match env::var(name) {
-        Ok(value) => value.parse::<T>().map_err(|_| {
-            format!(
-                "Invalid value for environment variable {}: {}",
-                name, value
-            )
-        }),
+        Ok(value) => parse_config_value(
+            name,
+            &value,
+        ),
 
         Err(env::VarError::NotPresent) => Ok(default),
 
@@ -510,5 +523,31 @@ mod tests {
             response.status(),
             StatusCode::PAYLOAD_TOO_LARGE
         );
+    }
+
+    #[test]
+    fn invalid_environment_value_is_rejected() {
+        let result = parse_config_value::<u64>(
+            "WASMBOX_MAX_FUEL",
+            "banana",
+        );
+
+        assert!(result.is_err());
+
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid value for environment variable WASMBOX_MAX_FUEL: banana"
+        );
+    }
+
+    #[test]
+    fn valid_environment_value_is_parsed() {
+        let result = parse_config_value::<u64>(
+            "WASMBOX_MAX_FUEL",
+            "20000",
+        )
+        .expect("Value should be valid");
+
+        assert_eq!(result, 20_000);
     }
 }
