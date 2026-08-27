@@ -1,5 +1,6 @@
 use wasmbox::sandbox::{
     execute_wat,
+    ExecutionError,
     SandboxError,
 };
 
@@ -104,17 +105,39 @@ async fn execute(
     .await;
 
     match execution {
-    Ok(Ok(result)) => (
-        StatusCode::OK,
-        Json(ExecuteResponse {
-            success: result.success,
-            message: result.message,
-            output: result.output,
-            execution_time_ms: Some(result.execution_time_ms),
-            fuel_used: Some(result.fuel_used),
-            memory_used_bytes: Some(result.memory_used_bytes),
-        }),
-    ),
+    Ok(Ok(result)) => {
+        let status = match &result.error {
+            None => StatusCode::OK,
+
+            Some(ExecutionError::Timeout) => {
+                StatusCode::REQUEST_TIMEOUT
+            }
+
+            Some(
+                ExecutionError::FuelExhausted
+                | ExecutionError::InvalidMemoryAccess
+                | ExecutionError::InvalidPointer
+                | ExecutionError::InvalidTextLength
+                | ExecutionError::InvalidMemoryRange
+                | ExecutionError::InvalidUtf8
+                | ExecutionError::Other(_),
+            ) => {
+                StatusCode::UNPROCESSABLE_ENTITY
+            }
+        };
+
+        (
+            status,
+            Json(ExecuteResponse {
+                success: result.success,
+                message: result.message,
+                output: result.output,
+                execution_time_ms: Some(result.execution_time_ms),
+                fuel_used: Some(result.fuel_used),
+                memory_used_bytes: Some(result.memory_used_bytes),
+            }),
+        )
+    }
 
     Ok(Err(error)) => {
         let status = match &error {
