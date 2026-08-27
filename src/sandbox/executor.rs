@@ -160,14 +160,39 @@ pub fn execute_wat_with_config(
     let module = Module::new(&engine, code)
         .map_err(|error| SandboxError::InvalidModule(error.to_string()))?;
 
-    let mut store = create_store_with_config(&engine, config)
+    execute_module_with_config(&engine, &module, config)
+}
+
+pub fn execute_file(path: &str) -> Result<SandboxResult, SandboxError> {
+    execute_file_with_config(path, SandboxConfig::default())
+}
+
+pub fn execute_file_with_config(
+    path: &str,
+    config: SandboxConfig,
+) -> Result<SandboxResult, SandboxError> {
+    let engine =
+        create_engine().map_err(|error| SandboxError::EngineCreation(error.to_string()))?;
+
+    let module = Module::from_file(&engine, path)
+        .map_err(|error| SandboxError::InvalidModule(error.to_string()))?;
+
+    execute_module_with_config(&engine, &module, config)
+}
+
+fn execute_module_with_config(
+    engine: &Engine,
+    module: &Module,
+    config: SandboxConfig,
+) -> Result<SandboxResult, SandboxError> {
+    let mut store = create_store_with_config(engine, config)
         .map_err(|error| SandboxError::StoreCreation(error.to_string()))?;
 
-    let instance = instantiate_guest(&engine, &mut store, &module)
+    let instance = instantiate_guest(engine, &mut store, module)
         .map_err(|error| SandboxError::Instantiation(error.to_string()))?;
 
     let run = get_run_function(&instance, &mut store)
         .map_err(|error| SandboxError::InvalidContract(error.to_string()))?;
 
-    Ok(execute_run(&engine, &instance, &run, &mut store))
+    Ok(execute_run(engine, &instance, &run, &mut store))
 }
