@@ -303,3 +303,32 @@ fn execution_rejects_config_above_allowed_maximum() {
 
     assert!(matches!(result, Err(SandboxError::InvalidConfig(_))));
 }
+
+#[test]
+fn oversized_guest_source_is_rejected() {
+    let filler = " ".repeat(300 * 1024);
+    let code = format!("(module {} (func (export \"run\")))", filler);
+
+    let result = execute_wat(&code);
+
+    assert!(matches!(result, Err(SandboxError::SourceTooLarge(_))));
+}
+
+#[test]
+fn guest_with_infinite_start_function_is_rejected() {
+    let code = r#"
+        (module
+            (func $spin
+                (loop $forever
+                    br $forever
+                )
+            )
+            (start $spin)
+            (func (export "run"))
+        )
+    "#;
+
+    let result = execute_wat(code);
+
+    assert!(matches!(result, Err(SandboxError::Instantiation(_))));
+}

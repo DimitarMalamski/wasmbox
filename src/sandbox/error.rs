@@ -1,6 +1,7 @@
 #[derive(Debug)]
 pub enum SandboxError {
     EngineCreation(String),
+    SourceTooLarge(String),
     InvalidModule(String),
     InvalidConfig(String),
     StoreCreation(String),
@@ -13,6 +14,10 @@ impl std::fmt::Display for SandboxError {
         match self {
             SandboxError::EngineCreation(message) => {
                 write!(formatter, "Failed to create sandbox: {}", message)
+            }
+
+            SandboxError::SourceTooLarge(message) => {
+                write!(formatter, "{}", message)
             }
 
             SandboxError::InvalidModule(message) => {

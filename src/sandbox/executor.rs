@@ -7,11 +7,47 @@ use std::{
 use wasmtime::{Config, Engine, Instance, Linker, Module, Store, StoreLimitsBuilder, TypedFunc};
 
 use super::{
-    config::{MAX_TABLE_ELEMENTS, SandboxConfig, validate_sandbox_config},
+    config::{MAX_GUEST_CODE_BYTES, MAX_TABLE_ELEMENTS, SandboxConfig, validate_sandbox_config},
     error::{SandboxError, classify_execution_error},
     host::register_host_functions,
     state::{SandboxResult, SandboxState},
 };
+
+struct EpochTimer {
+    cancel_sender: mpsc::Sender<()>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl EpochTimer {
+    fn start(engine: &Engine, seconds: u64) -> Self {
+        let (cancel_sender, cancel_receiver) = mpsc::channel::<()>();
+        let timer_engine = engine.clone();
+
+        let handle = thread::spawn(move || {
+            if cancel_receiver
+                .recv_timeout(Duration::from_secs(seconds))
+                .is_err()
+            {
+                timer_engine.increment_epoch();
+            }
+        });
+
+        Self {
+            cancel_sender,
+            handle: Some(handle),
+        }
+    }
+}
+
+impl Drop for EpochTimer {
+    fn drop(&mut self) {
+        let _ = self.cancel_sender.send(());
+
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
 
 fn create_engine() -> wasmtime::Result<Engine> {
     let mut config = Config::new();
@@ -78,55 +114,34 @@ fn get_run_function(
 }
 
 fn execute_run(
-    engine: &Engine,
     instance: &Instance,
     run: &TypedFunc<(), ()>,
     store: &mut Store<SandboxState>,
 ) -> SandboxResult {
-    let (cancel_sender, cancel_receiver) = mpsc::channel::<()>();
-
-    let max_execution_time_seconds = store.data().config.max_execution_time_seconds;
-
-    let timeout_engine = engine.clone();
-
-    let timeout_handle = thread::spawn(move || {
-        if cancel_receiver
-            .recv_timeout(Duration::from_secs(max_execution_time_seconds))
-            .is_err()
-        {
-            timeout_engine.increment_epoch();
-        }
-    });
-
     let start = Instant::now();
 
     let fuel_before = store.get_fuel().unwrap_or(0);
 
     let execution_result = run.call(&mut *store, ());
 
+    let execution_time_ms = start.elapsed().as_secs_f64() * 1000.0;
+
     let remaining_fuel = store.get_fuel().unwrap_or(0);
     let fuel_used = fuel_before.saturating_sub(remaining_fuel);
 
-    let guest_memory = instance.get_memory(&mut *store, "memory");
-
-    let memory_used_bytes = match guest_memory {
+    let memory_used_bytes = match instance.get_memory(&mut *store, "memory") {
         Some(memory) => memory.data_size(&*store),
         None => 0,
     };
 
     let output = store.data().output.clone();
 
-    let _ = cancel_sender.send(());
-    let _ = timeout_handle.join();
-
-    let execution_time_ms = start.elapsed().as_secs_f64() * 1000.0;
-
     match execution_result {
         Ok(_) => SandboxResult {
             success: true,
             message: "Guest executed successfully.".to_string(),
             error: None,
-            output: output.clone(),
+            output,
             execution_time_ms,
             fuel_used,
             memory_used_bytes,
@@ -156,6 +171,14 @@ pub fn execute_wat_with_config(
     code: &str,
     config: SandboxConfig,
 ) -> Result<SandboxResult, SandboxError> {
+    if code.len() > MAX_GUEST_CODE_BYTES {
+        return Err(SandboxError::SourceTooLarge(format!(
+            "Guest source is {} bytes, which exceeds the {} byte limit.",
+            code.len(),
+            MAX_GUEST_CODE_BYTES
+        )));
+    }
+
     let engine =
         create_engine().map_err(|error| SandboxError::EngineCreation(error.to_string()))?;
 
@@ -192,11 +215,14 @@ fn execute_module_with_config(
     let mut store = create_store_with_config(engine, config)
         .map_err(|error| SandboxError::StoreCreation(error.to_string()))?;
 
+    let time_limit_seconds = store.data().config.max_execution_time_seconds;
+    let _timer = EpochTimer::start(engine, time_limit_seconds);
+
     let instance = instantiate_guest(engine, &mut store, module)
         .map_err(|error| SandboxError::Instantiation(error.to_string()))?;
 
     let run = get_run_function(&instance, &mut store)
         .map_err(|error| SandboxError::InvalidContract(error.to_string()))?;
 
-    Ok(execute_run(engine, &instance, &run, &mut store))
+    Ok(execute_run(&instance, &run, &mut store))
 }

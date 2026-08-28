@@ -191,3 +191,24 @@ async fn oversized_request_is_rejected() {
 
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
+
+#[tokio::test]
+async fn guest_source_over_sandbox_limit_is_rejected() {
+    let app = create_app().expect("App should be created");
+
+    let filler = " ".repeat(300 * 1024);
+    let code = format!("(module {} (func (export \"run\")))", filler);
+
+    let body = serde_json::json!({ "code": code }).to_string();
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/execute")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}

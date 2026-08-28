@@ -85,6 +85,8 @@ pub(super) async fn execute(
                 | SandboxError::StoreCreation(_)
                 | SandboxError::InvalidConfig(_) => StatusCode::INTERNAL_SERVER_ERROR,
 
+                SandboxError::SourceTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
+
                 SandboxError::InvalidModule(_)
                 | SandboxError::Instantiation(_)
                 | SandboxError::InvalidContract(_) => StatusCode::BAD_REQUEST,
