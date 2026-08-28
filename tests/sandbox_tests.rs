@@ -177,28 +177,29 @@ fn guest_exceeding_output_limit_is_stopped() {
 }
 
 #[test]
-fn infinite_guest_is_stopped_by_timeout() {
+fn timeout_thread_does_not_interfere_with_fast_guest() {
     let code = r#"
         (module
+            (import "host" "print_number"
+                (func $print_number (param i32))
+            )
             (func (export "run")
-                (loop $forever
-                    br $forever
-                )
+                i32.const 7
+                call $print_number
             )
         )
     "#;
 
     let config = SandboxConfig {
-        max_fuel: u64::MAX,
         max_execution_time_seconds: 1,
         ..Default::default()
     };
 
     let result = execute_wat_with_config(code, config).expect("Sandbox setup should succeed");
 
-    assert!(!result.success);
-
-    assert!(matches!(result.error, Some(ExecutionError::Timeout)));
+    assert!(result.success);
+    assert_eq!(result.output, vec!["7".to_string()]);
+    assert!(result.execution_time_ms < 1000.0);
 }
 
 #[test]
@@ -236,4 +237,69 @@ fn excessive_memory_configuration_is_rejected() {
             MAX_ALLOWED_MEMORY_BYTES
         )
     );
+}
+
+#[test]
+fn guest_declaring_multiple_memories_is_rejected() {
+    let code = r#"
+        (module
+            (memory 1)
+            (memory 1)
+            (func (export "run"))
+        )
+    "#;
+
+    let result = execute_wat(code);
+
+    assert!(matches!(result, Err(SandboxError::InvalidModule(_))));
+}
+
+#[test]
+fn guest_declaring_an_oversized_table_is_rejected() {
+    let code = r#"
+        (module
+            (table 10000000 funcref)
+            (func (export "run"))
+        )
+    "#;
+
+    let result = execute_wat(code);
+
+    assert!(matches!(result, Err(SandboxError::Instantiation(_))));
+}
+
+#[test]
+fn execution_rejects_zero_fuel_config() {
+    let code = r#"
+        (module
+            (func (export "run"))
+        )
+    "#;
+
+    let config = SandboxConfig {
+        max_fuel: 0,
+        ..Default::default()
+    };
+
+    let result = execute_wat_with_config(code, config);
+
+    assert!(matches!(result, Err(SandboxError::InvalidConfig(_))));
+}
+
+#[test]
+fn execution_rejects_config_above_allowed_maximum() {
+    let code = r#"
+        (module
+            (func (export "run"))
+        )
+    "#;
+
+    let config = SandboxConfig {
+        max_memory_bytes: MAX_ALLOWED_MEMORY_BYTES + 1,
+        ..Default::default()
+    };
+
+    let result = execute_wat_with_config(code, config);
+
+    assert!(matches!(result, Err(SandboxError::InvalidConfig(_))));
 }

@@ -2,6 +2,7 @@
 pub enum SandboxError {
     EngineCreation(String),
     InvalidModule(String),
+    InvalidConfig(String),
     StoreCreation(String),
     Instantiation(String),
     InvalidContract(String),
@@ -16,6 +17,10 @@ impl std::fmt::Display for SandboxError {
 
             SandboxError::InvalidModule(message) => {
                 write!(formatter, "Invalid WebAssembly: {}", message)
+            }
+
+            SandboxError::InvalidConfig(message) => {
+                write!(formatter, "{}", message)
             }
 
             SandboxError::StoreCreation(message) => {

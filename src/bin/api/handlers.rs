@@ -81,9 +81,9 @@ pub(super) async fn execute(
 
         Ok(Err(error)) => {
             let status = match &error {
-                SandboxError::EngineCreation(_) | SandboxError::StoreCreation(_) => {
-                    StatusCode::INTERNAL_SERVER_ERROR
-                }
+                SandboxError::EngineCreation(_)
+                | SandboxError::StoreCreation(_)
+                | SandboxError::InvalidConfig(_) => StatusCode::INTERNAL_SERVER_ERROR,
 
                 SandboxError::InvalidModule(_)
                 | SandboxError::Instantiation(_)

@@ -2,6 +2,7 @@ pub const MAX_FUEL: u64 = 10_000;
 pub const MAX_MEMORY_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_EXECUTION_TIME_SECONDS: u64 = 2;
 pub const MAX_OUTPUT_BYTES: usize = 64 * 1024;
+pub const MAX_TABLE_ELEMENTS: usize = 100_000;
 
 pub const MAX_ALLOWED_FUEL: u64 = 10_000_000;
 pub const MAX_ALLOWED_MEMORY_BYTES: usize = 256 * 1024 * 1024;

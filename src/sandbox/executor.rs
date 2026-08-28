@@ -7,7 +7,7 @@ use std::{
 use wasmtime::{Config, Engine, Instance, Linker, Module, Store, StoreLimitsBuilder, TypedFunc};
 
 use super::{
-    config::SandboxConfig,
+    config::{MAX_TABLE_ELEMENTS, SandboxConfig, validate_sandbox_config},
     error::{SandboxError, classify_execution_error},
     host::register_host_functions,
     state::{SandboxResult, SandboxState},
@@ -18,6 +18,8 @@ fn create_engine() -> wasmtime::Result<Engine> {
 
     config.consume_fuel(true);
     config.epoch_interruption(true);
+    config.wasm_multi_memory(false);
+    config.wasm_threads(false);
 
     Engine::new(&config)
 }
@@ -28,6 +30,10 @@ fn create_store_with_config(
 ) -> wasmtime::Result<Store<SandboxState>> {
     let limits = StoreLimitsBuilder::new()
         .memory_size(config.max_memory_bytes)
+        .memories(1)
+        .tables(1)
+        .instances(1)
+        .table_elements(MAX_TABLE_ELEMENTS)
         .build();
 
     let mut store = Store::new(
@@ -181,6 +187,8 @@ fn execute_module_with_config(
     module: &Module,
     config: SandboxConfig,
 ) -> Result<SandboxResult, SandboxError> {
+    let config = validate_sandbox_config(config).map_err(SandboxError::InvalidConfig)?;
+
     let mut store = create_store_with_config(engine, config)
         .map_err(|error| SandboxError::StoreCreation(error.to_string()))?;
 
