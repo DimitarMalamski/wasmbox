@@ -1,5 +1,6 @@
 use wasmtime::{Caller, Linker};
 
+use super::error::HostError;
 use super::state::SandboxState;
 
 pub(super) fn register_host_functions(linker: &mut Linker<SandboxState>) -> wasmtime::Result<()> {
@@ -20,7 +21,7 @@ fn register_print_number(linker: &mut Linker<SandboxState>) -> wasmtime::Result<
             let state = caller.data_mut();
 
             if state.output_bytes.saturating_add(text_bytes) > state.config.max_output_bytes {
-                return Err(wasmtime::Error::msg("output limit exceeded"));
+                return Err(HostError::OutputLimitExceeded.into());
             }
 
             state.output_bytes += text_bytes;
@@ -47,28 +48,26 @@ fn host_print_text(
     let memory = caller
         .get_export("memory")
         .and_then(|export| export.into_memory())
-        .ok_or_else(|| wasmtime::Error::msg("memory export not found"))?;
+        .ok_or(HostError::MemoryExportMissing)?;
 
     let data = memory.data(&caller);
 
-    let start =
-        usize::try_from(pointer).map_err(|_| wasmtime::Error::msg("invalid memory pointer"))?;
+    let start = usize::try_from(pointer).map_err(|_| HostError::InvalidPointer)?;
 
-    let length =
-        usize::try_from(length).map_err(|_| wasmtime::Error::msg("invalid text length"))?;
+    let length = usize::try_from(length).map_err(|_| HostError::InvalidTextLength)?;
 
     let end = start
         .checked_add(length)
-        .ok_or_else(|| wasmtime::Error::msg("invalid memory range"))?;
+        .ok_or(HostError::InvalidMemoryRange)?;
 
     if end > data.len() {
-        return Err(wasmtime::Error::msg("memory access out of bounds"));
+        return Err(HostError::MemoryAccessOutOfBounds.into());
     }
 
     let bytes = &data[start..end];
 
     let text = std::str::from_utf8(bytes)
-        .map_err(|_| wasmtime::Error::msg("invalid UTF-8"))?
+        .map_err(|_| HostError::InvalidUtf8)?
         .to_string();
 
     let text_bytes = text.len();
@@ -76,7 +75,7 @@ fn host_print_text(
     let state = caller.data_mut();
 
     if state.output_bytes.saturating_add(text_bytes) > state.config.max_output_bytes {
-        return Err(wasmtime::Error::msg("output limit exceeded"));
+        return Err(HostError::OutputLimitExceeded.into());
     }
 
     state.output_bytes += text_bytes;

@@ -100,26 +100,69 @@ impl std::fmt::Display for ExecutionError {
     }
 }
 
-pub(super) fn classify_execution_error(error: &wasmtime::Error) -> ExecutionError {
-    let error_message = format!("{:#}", error);
+#[derive(Debug)]
+pub(super) enum HostError {
+    MemoryExportMissing,
+    InvalidPointer,
+    InvalidTextLength,
+    InvalidMemoryRange,
+    MemoryAccessOutOfBounds,
+    InvalidUtf8,
+    OutputLimitExceeded,
+}
 
-    if error_message.contains("fuel") {
-        ExecutionError::FuelExhausted
-    } else if error_message.contains("wasm trap: interrupt") {
-        ExecutionError::Timeout
-    } else if error_message.contains("memory access out of bounds") {
-        ExecutionError::InvalidMemoryAccess
-    } else if error_message.contains("invalid memory pointer") {
-        ExecutionError::InvalidPointer
-    } else if error_message.contains("invalid text length") {
-        ExecutionError::InvalidTextLength
-    } else if error_message.contains("invalid memory range") {
-        ExecutionError::InvalidMemoryRange
-    } else if error_message.contains("invalid UTF-8") {
-        ExecutionError::InvalidUtf8
-    } else if error_message.contains("output limit exceeded") {
-        ExecutionError::OutputLimitExceeded
-    } else {
-        ExecutionError::Other(error_message)
+impl std::fmt::Display for HostError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HostError::MemoryExportMissing => {
+                write!(formatter, "guest memory export not found")
+            }
+            HostError::InvalidPointer => {
+                write!(formatter, "guest provided an invalid memory pointer")
+            }
+            HostError::InvalidTextLength => {
+                write!(formatter, "guest provided an invalid text length")
+            }
+            HostError::InvalidMemoryRange => {
+                write!(formatter, "guest provided an invalid memory range")
+            }
+            HostError::MemoryAccessOutOfBounds => {
+                write!(formatter, "guest memory access out of bounds")
+            }
+            HostError::InvalidUtf8 => {
+                write!(formatter, "guest provided invalid UTF-8 text")
+            }
+            HostError::OutputLimitExceeded => {
+                write!(formatter, "guest output limit exceeded")
+            }
+        }
     }
+}
+
+impl std::error::Error for HostError {}
+
+pub(super) fn classify_execution_error(error: &wasmtime::Error) -> ExecutionError {
+    if let Some(host_error) = error.downcast_ref::<HostError>() {
+        return match host_error {
+            HostError::MemoryExportMissing | HostError::MemoryAccessOutOfBounds => {
+                ExecutionError::InvalidMemoryAccess
+            }
+            HostError::InvalidPointer => ExecutionError::InvalidPointer,
+            HostError::InvalidTextLength => ExecutionError::InvalidTextLength,
+            HostError::InvalidMemoryRange => ExecutionError::InvalidMemoryRange,
+            HostError::InvalidUtf8 => ExecutionError::InvalidUtf8,
+            HostError::OutputLimitExceeded => ExecutionError::OutputLimitExceeded,
+        };
+    }
+
+    if let Some(trap) = error.downcast_ref::<wasmtime::Trap>() {
+        return match trap {
+            wasmtime::Trap::OutOfFuel => ExecutionError::FuelExhausted,
+            wasmtime::Trap::Interrupt => ExecutionError::Timeout,
+            wasmtime::Trap::MemoryOutOfBounds => ExecutionError::InvalidMemoryAccess,
+            _ => ExecutionError::Other(format!("{:#}", error)),
+        };
+    }
+
+    ExecutionError::Other(format!("{:#}", error))
 }

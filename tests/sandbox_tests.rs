@@ -37,6 +37,7 @@ fn infinite_guest_is_stopped_by_fuel_limit() {
     assert!(!result.success);
     assert_eq!(result.message, "Execution limit exceeded.");
     assert_eq!(result.fuel_used, 10_000);
+    assert!(matches!(result.error, Some(ExecutionError::FuelExhausted)));
 }
 
 #[test]
@@ -331,4 +332,26 @@ fn guest_with_infinite_start_function_is_rejected() {
     let result = execute_wat(code);
 
     assert!(matches!(result, Err(SandboxError::Instantiation(_))));
+}
+
+#[test]
+fn direct_out_of_bounds_load_is_classified_as_invalid_memory_access() {
+    let code = r#"
+        (module
+            (memory 1)
+            (func (export "run")
+                i32.const 1000000
+                i32.load
+                drop
+            )
+        )
+    "#;
+
+    let result = execute_wat(code).expect("Sandbox setup should succeed");
+
+    assert!(!result.success);
+    assert!(matches!(
+        result.error,
+        Some(ExecutionError::InvalidMemoryAccess)
+    ));
 }
